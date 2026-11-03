@@ -1084,6 +1084,9 @@ class HomeController {
 @endsection
 ```
 
+`@react(props) … @endreact` embeds a React component (JSX/TSX, compiled on the
+server with the optional `@swc/core`) that mounts in the browser.
+
 See the [Views guide](https://meghjs.github.io/advanced/views) for the full syntax.
 
 ---

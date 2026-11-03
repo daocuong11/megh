@@ -140,6 +140,16 @@ ${key ? `const ${key} = ${items}[${i}][0];` : ""} const ${value} = ${items}[${i}
     // Inline: @js(const total = items.length). The block form is handled by the lexer.
     js: (a, ctx, t) => `${ctx.expect(a, t)};`,
 
+    // ---------- React islands ----------
+    // @react(props) ... @endreact is captured by the lexer and compiled in
+    // compiler.ts; these entries register the names and catch strays.
+    react: (a, ctx, t) => {
+      throw ctx.error("@react is handled by the lexer", t);
+    },
+    endreact: (a, ctx, t) => {
+      throw ctx.error("@endreact without matching @react", t);
+    },
+
     // ---------- output helpers ----------
     json: (a, ctx, t) => `__out += __rt.json(${ctx.expect(a, t)});`,
     csrf: () =>

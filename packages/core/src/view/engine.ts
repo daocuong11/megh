@@ -8,6 +8,7 @@ import {
   type TemplateRenderer,
 } from "./runtime";
 import { TemplateError } from "./errors";
+import { defaultReactImports, type ReactImports } from "./react";
 
 export type ViewEngineOptions = {
   /** Folder holding the views. Defaults to `<cwd>/views`. */
@@ -22,6 +23,14 @@ export type ViewEngineOptions = {
   cache?: boolean;
   /** Guards against a view including itself forever. Defaults to 100. */
   maxDepth?: number;
+  /** Options for `@react` blocks. */
+  react?: {
+    /**
+     * Bare import -> URL, like an import map. Merged over the defaults, which
+     * load React 19 from esm.sh. Add entries for other packages you import.
+     */
+    imports?: ReactImports;
+  };
 };
 
 type ViewData = Record<string, unknown>;
@@ -46,13 +55,16 @@ export class ViewEngine implements TemplateRenderer {
     { fn: CompiledTemplate; mtimeMs: number }
   >();
   private readonly shared: ViewData = {};
+  private readonly reactImports: ReactImports;
 
   constructor({
     root = path.join(process.cwd(), "views"),
     extension = ".megh.html",
     cache = process.env.NODE_ENV !== "development",
     maxDepth = 100,
+    react,
   }: ViewEngineOptions = {}) {
+    this.reactImports = { ...defaultReactImports, ...react?.imports };
     this.root = path.resolve(root);
     this.extension = extension;
     this.cache = cache;
@@ -117,6 +129,7 @@ export class ViewEngine implements TemplateRenderer {
     const fn = compileTemplate(fs.readFileSync(file, "utf8"), {
       name,
       directives: this.directives,
+      reactImports: this.reactImports,
     });
     this.compiled.set(file, { fn, mtimeMs: stat.mtimeMs });
     return fn;
@@ -151,6 +164,7 @@ export class ViewEngine implements TemplateRenderer {
     const fn = compileTemplate(src, {
       name,
       directives: this.directives,
+      reactImports: this.reactImports,
     });
     return stripPlaceholders(fn({ ...this.shared, ...data }, ctx));
   }

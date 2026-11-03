@@ -67,6 +67,7 @@ export class RenderContext {
   readonly sections = new Map<string, string>();
   readonly stacks = new Map<string, string[]>();
   depth = 0;
+  private ids = 0;
   readonly PARENT = PARENT;
 
   constructor(private readonly engine: TemplateRenderer) {}
@@ -90,6 +91,11 @@ export class RenderContext {
       SCRIPT_UNSAFE,
       (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"),
     );
+  }
+
+  /** An id unique within this render, e.g. for `@react` mount points. */
+  nextId(prefix: string) {
+    return `${prefix}-${this.ids++}`;
   }
 
   // ----- conditionals / loops -----

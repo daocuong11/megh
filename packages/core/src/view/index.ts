@@ -24,3 +24,4 @@ export {
   type LoopInfo,
 } from "./runtime";
 export { TemplateError } from "./errors";
+export { defaultReactImports, type ReactImports } from "./react";

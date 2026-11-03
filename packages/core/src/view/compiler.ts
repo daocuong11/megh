@@ -7,6 +7,11 @@ import {
   type DirectiveHandler,
 } from "./directives";
 import type { RenderContext } from "./runtime";
+import {
+  compileReactIsland,
+  defaultReactImports,
+  type ReactImports,
+} from "./react";
 
 /** A compiled template. `source` is the generated function body, for debugging. */
 export type CompiledTemplate = ((
@@ -18,6 +23,8 @@ export type CompileOptions = {
   /** Used in error messages, e.g. `pages.home`. */
   name?: string;
   directives?: ReadonlyMap<string, DirectiveHandler>;
+  /** Bare import -> URL map for `@react` blocks. Defaults to React on esm.sh. */
+  reactImports?: ReactImports;
 };
 
 /**
@@ -27,7 +34,11 @@ export type CompileOptions = {
  */
 export function compileTemplate(
   src: string,
-  { name = "anonymous", directives = builtinDirectives }: CompileOptions = {},
+  {
+    name = "anonymous",
+    directives = builtinDirectives,
+    reactImports = defaultReactImports,
+  }: CompileOptions = {},
 ): CompiledTemplate {
   const tokens = tokenize(compileComponentTags(src), {
     name,
@@ -50,6 +61,10 @@ export function compileTemplate(
         break;
       case "code":
         code += `${t.value}\n`;
+        break;
+      case "react":
+        code += `${compileReact(t.value, t.args, name, t.line, reactImports)}
+`;
         break;
       case "directive":
         code += `${directives.get(t.name)!(t.args, ctx, t)}\n`;
@@ -89,6 +104,38 @@ ${code}
   }
   fn.source = source;
   return fn;
+}
+
+/**
+ * `@react(props) ... @endreact` becomes an empty element plus an inline module
+ * that mounts the block's component into it. The JSX is compiled once, here;
+ * only the props are serialised on each render.
+ */
+function compileReact(
+  body: string,
+  props: string | null,
+  template: string,
+  line: number,
+  imports: ReactImports,
+): string {
+  const { head, target } = compileReactIsland(body, {
+    template,
+    line,
+    imports,
+  });
+  // Rendered as: <div id="ID"></div><script type="module">HEAD
+  // const __meghProps = PROPS;
+  // __meghCreateRoot(document.getElementById("ID")).render(__meghH(TARGET, __meghProps));
+  // </script>
+  const open = `<script type="module">\n${head}\nconst __meghProps = `;
+  const mount = (id: string) =>
+    `${JSON.stringify(";\n__meghCreateRoot(document.getElementById(\"")} + ${id} + ` +
+    JSON.stringify(`")).render(__meghH(${target}, __meghProps));\n</script>`);
+  return [
+    "{ const __rid = __rt.nextId(\"megh-react\");",
+    `__out += '<div id="' + __rid + '"></div>' + ${JSON.stringify(open)}`,
+    `  + __rt.json(${props || "{}"}) + ${mount("__rid")}; }`,
+  ].join("\n");
 }
 
 function createCompilerContext(name: string): CompilerContext {

@@ -3,7 +3,8 @@ import { TemplateError } from "./errors";
 
 export type Token =
   | { type: "text" | "echo" | "raw" | "code"; value: string; line: number }
-  | { type: "directive"; name: string; args: string | null; line: number };
+  | { type: "directive"; name: string; args: string | null; line: number }
+  | { type: "react"; value: string; args: string | null; line: number };
 
 export type DirectiveToken = Extract<Token, { type: "directive" }>;
 
@@ -13,6 +14,7 @@ export type DirectiveToken = Extract<Token, { type: "directive" }>;
  *   echo       {{ expr }}   (escaped)
  *   raw        {!! expr !!} (not escaped)
  *   code       @js ... @endjs
+ *   react      @react(props) ... @endreact (JSX, compiled separately)
  *   directive  @name or @name(args)
  * Every token carries the `line` it starts on, for error messages.
  *
@@ -110,6 +112,20 @@ export function tokenize(
           const stop = find("@endjs", end, "@js block (missing @endjs)");
           tokens.push({ type: "code", value: src.slice(end, stop), line });
           advance(stop + "@endjs".length);
+        } else if (dName === "react") {
+          // The body is JSX, where `{{ }}` is a style object, not an echo: capture it raw.
+          const stop = find(
+            "@endreact",
+            end,
+            "@react block (missing @endreact)",
+          );
+          tokens.push({
+            type: "react",
+            value: src.slice(end, stop),
+            args,
+            line,
+          });
+          advance(stop + "@endreact".length);
         } else {
           tokens.push({ type: "directive", name: dName, args, line });
           advance(end);
