@@ -37,6 +37,7 @@ import { registerPlugins } from "../plugins/registry";
 import { internalLogger } from "../observability/internal-logger";
 import { setConnection } from "../orm/connection";
 import type { Kysely } from "kysely";
+import { ViewEngine, setViewEngine, type ViewEngineOptions } from "../view";
 // ---------------------------------------------------------------------------
 // Lazy loaders for optional peer dependencies
 // ---------------------------------------------------------------------------
@@ -148,6 +149,7 @@ export class MeghApplication implements IMeghApplication {
     };
   private closing: Promise<void> | null = null;
   private pluginNames: string[] = [];
+  private viewEngine: ViewEngine | undefined;
 
   private constructor(options?: MeghApplicationOptions) {
     this.app = Fastify({
@@ -410,6 +412,28 @@ export class MeghApplication implements IMeghApplication {
     return this;
   }
 
+  /**
+   * Configure the view engine used by `Results.View()` / `view()`.
+   *
+   *   app.useViews({ root: "views" });       // views/pages/home.megh.html
+   *   app.useViews(engine);                  // an engine you built yourself
+   *
+   * Templates are cached unless `NODE_ENV` is `"development"`, where a file
+   * is recompiled when it changes.
+   */
+  useViews(options: ViewEngineOptions | ViewEngine = {}) {
+    this.viewEngine =
+      options instanceof ViewEngine ? options : new ViewEngine(options);
+    setViewEngine(this.viewEngine);
+    return this;
+  }
+
+  /** The engine set by `useViews()`, for `share()` and `directive()`. */
+  getViews(): ViewEngine {
+    if (!this.viewEngine) this.useViews();
+    return this.viewEngine!;
+  }
+
   useHttps(options?: any) {
     return this;
   }
@@ -422,6 +446,7 @@ export class MeghApplication implements IMeghApplication {
     if (options.authorization) this.useAuthorization(options.authorization);
     if (options.multipart) this.useMultipart(options.multipart);
     if (options.staticFiles) this.useStaticFiles(options.staticFiles);
+    if (options.views) this.useViews(options.views);
     if ((options as any).scheduler)
       this.useScheduler((options as any).scheduler);
     return this;

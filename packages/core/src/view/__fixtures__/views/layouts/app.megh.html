@@ -1,0 +1,15 @@
+<!doctype html>
+<html>
+<head>
+  <title>@yield('title', 'Megh App')</title>
+  @stack('styles')
+</head>
+<body>
+  @include('partials.nav')
+  @section('sidebar')
+    <aside>Default sidebar</aside>
+  @show
+  <main>@yield('content')</main>
+  @stack('scripts')
+</body>
+</html>

@@ -50,6 +50,7 @@ Documentation: **https://meghjs.github.io**
   - [Caching](#caching)
   - [File Uploads](#file-uploads)
   - [Static Files](#static-files)
+  - [Views](#views)
   - [WebSocket (Socket.IO)](#websocket-socketio)
 - [Route Mapping (Functional Style)](#route-mapping-functional-style)
 - [Testing](#testing)
@@ -75,6 +76,7 @@ Documentation: **https://meghjs.github.io**
 - 🔑 **Authentication** — pluggable handler that populates `request.user`
 - 🔒 **Authorization** — deny-by-default `@Authorized` routes
 - 📁 **File uploads** — multipart support with safe, confined storage
+- 🖼️ **Views** — Blade-style HTML templates with layouts, components and stacks
 - 🧬 **Models & migrations** — type-safe, Eloquent-style models and migrations built on [Kysely](https://kysely.dev)
 - 🗄️ **Database** — TypeORM and Knex integrations with one pagination shape
 - ⚙️ **Config** — typed, environment-aware config classes
@@ -1054,6 +1056,35 @@ app.useStaticFiles({
   prefix: "/static/",
 });
 ```
+
+---
+
+### Views
+
+Blade-style templates: `{{ }}` echoes, `@if` / `@foreach`, layouts, includes,
+stacks and `<x-component>` tags. Files live in `views/` and end in `.megh.html`.
+
+```typescript
+app.useViews({ root: path.join(process.cwd(), "views") });
+
+@ApiController("/")
+class HomeController {
+  @Get("/")
+  index() {
+    return Results.View("home", { user: { name: "Ana" } }); // views/home.megh.html
+  }
+}
+```
+
+```html
+@extends('layouts.app')
+
+@section('content')
+  <h1>Hello, {{ user.name }}</h1>
+@endsection
+```
+
+See the [Views guide](https://meghjs.github.io/advanced/views) for the full syntax.
 
 ---
 

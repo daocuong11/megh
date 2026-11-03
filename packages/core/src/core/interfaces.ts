@@ -16,6 +16,7 @@ import {
 } from "fastify";
 import type { RedisOptions } from "ioredis";
 import type { PluginOptions } from "../plugins/registry";
+import type { ViewEngine, ViewEngineOptions } from "../view";
 
 export type CorsOptions = {
   origin?:
@@ -46,6 +47,7 @@ export type GlobalOptions = {
   authorization?: any;
   multipart?: any;
   staticFiles?: any;
+  views?: ViewEngineOptions | ViewEngine;
 };
 
 export type MeghApplicationOptions = PluginOptions & {
@@ -80,6 +82,8 @@ export interface IMeghApplication {
   useSerialization: () => this;
   useControllers: (controllers: Constructor[] | AutoControllerOptions) => this;
   useStaticFiles: (options: any) => this;
+  /** Configure the view engine used by `Results.View()`. */
+  useViews: (options?: ViewEngineOptions | ViewEngine) => this;
   useHttps: (options?: any) => this;
   useGlobal: (options: GlobalOptions) => this;
   useSocketIo: (options?: any) => this;

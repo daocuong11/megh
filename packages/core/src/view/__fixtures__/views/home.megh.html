@@ -1,0 +1,30 @@
+@extends('layouts.app')
+
+@section('title', 'Home')
+
+@section('sidebar')
+  @parent
+  <aside>Extra links</aside>
+@endsection
+
+@section('content')
+  {{-- this comment never reaches the browser --}}
+  <h1>Hello, {{ user.name }}</h1>
+
+  <x-alert type="warning">
+    <x-slot:title>Heads up</x-slot>
+    You have {{ todos.length }} todos.
+  </x-alert>
+
+  <ul>
+  @foreach(todos as todo)
+    <li class="{{ loop.first ? 'first' : '' }}">{{ loop.iteration }}. {{ todo.title }}@if(todo.done) ✓@endif</li>
+  @endforeach
+  </ul>
+
+  <p>Contact: support@example.com · Vue: @{{ msg }}</p>
+@endsection
+
+@push('scripts')
+  <script>window.todos = @json(todos);</script>
+@endpush

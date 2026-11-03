@@ -44,6 +44,7 @@ import {
 import mime from "mime";
 import Stream from "stream";
 import { HTTPMethods, FastifyInstance } from "fastify";
+import { ViewResult, sendView } from "../view/result";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -525,6 +526,8 @@ export class MeghRouter {
 
           const result = await prototype[method].apply(ctrl, args);
 
+          if (result instanceof ViewResult) return sendView(res, result);
+
           if (result && result.download) {
             const { stream, filename } = result;
             if (!stream || typeof stream.pipe !== "function") {
@@ -779,7 +782,9 @@ export class MeghRouter {
         schema: routeSchema,
         preHandler: value.middlewares ?? [],
         handler: async (req, res) => {
-          return value.handler(req, res);
+          const result = await value.handler(req, res);
+          if (result instanceof ViewResult) return sendView(res, result);
+          return result;
         },
       });
     });
