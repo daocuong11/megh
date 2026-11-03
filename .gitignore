@@ -6,6 +6,8 @@ dist/
 coverage/
 *.tsbuildinfo
 
+.internal/*
+
 # VitePress
 docs/.vitepress/dist/
 docs/.vitepress/cache/
