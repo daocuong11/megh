@@ -8,7 +8,7 @@ import {
   Query,
   Body,
 } from "@meghjs/core";
-import { CreateUserDto } from "./dto";
+import { CreateUserDto } from "./dto.megh";
 @ApiController("/")
 class BenchController {
   @Get("/hello") hello() {
