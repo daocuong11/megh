@@ -97,9 +97,9 @@ describe("update:model", () => {
     expect(await runCli(["update:model", "user"], { cwd: tmp })).toBe(0);
     const model = readModel();
 
-    expect(model).toContain("@Column() full_name!: string;");
-    expect(model).toContain('@Column({ nullable: true, type: "string" }) phone!: string | null;');
-    expect(model).toContain('@Column({ type: "boolean" }) is_active?: boolean;');
+    expect(model).toContain("@Column()\n  full_name!: string;");
+    expect(model).toContain('@Column({ nullable: true, type: "string" })\n  phone!: string | null;');
+    expect(model).toContain('@Column({ type: "boolean" })\n  is_active?: boolean;');
     expect(model).not.toMatch(/\bage\b/);
     expect(model).not.toMatch(/\bname!:/);
     // Hand-written code is untouched.
@@ -119,7 +119,7 @@ describe("update:model", () => {
     fs.writeFileSync(
       modelFile(),
       readModel().replace(
-        "@Column() name!: string;",
+        "@Column()\n  name!: string;",
         '/** Shown in the UI. */\n  @Column({ name: "name" }) displayName!: string;',
       ),
     );
@@ -154,7 +154,7 @@ describe("update:model", () => {
     const model = readModel();
     expect(model).not.toContain("Years");
     expect(model).not.toContain("age");
-    expect(model).toContain("@Column() name!: string;");
+    expect(model).toContain("@Column()\n  name!: string;");
   });
 
   it("fixes the decorator imports", () => {
@@ -175,7 +175,7 @@ describe("update:model", () => {
     expect(model).toMatch(
       /import \{ AutoIncrement, Column, CreatedAt, DeletedAt, Model, PrimaryKey, Table, UpdatedAt \} from "@meghjs\/core";/,
     );
-    expect(model).toContain("@DeletedAt() deleted_at?: Date | null;");
+    expect(model).toContain("@DeletedAt()\n  deleted_at?: Date | null;");
   });
 
   it("does nothing when the model already matches", () => {

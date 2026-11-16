@@ -1,6 +1,6 @@
 import { snakeCase } from "../utils/names";
 import type { MigrationTable } from "./migration-schema";
-import { renderField } from "./orm-model";
+import { fieldLines, renderField } from "./orm-model";
 import { declaredProperties, type Declared } from "./resource";
 
 /**
@@ -83,10 +83,14 @@ export function syncModelSource(source: string, table: MigrationTable): { source
 
   for (const column of table.columns) {
     const { decorators, field } = renderField(column);
-    const fresh = `${decorators.join(" ")} ${field}`;
+    const freshLines = fieldLines(decorators, field);
+    const fresh = freshLines.join(" ");
+    const block = (pad: string) => freshLines.map((l) => pad + l).join(eol);
     const existing = find(column.name);
     if (!existing) {
-      insertAfter.set(anchor, [...(insertAfter.get(anchor) ?? []), indent + fresh]);
+      // A blank line separates it from the field above (or from the class body below).
+      const lines = anchor === classLine ? [block(indent), ""] : ["", block(indent)];
+      insertAfter.set(anchor, [...(insertAfter.get(anchor) ?? []), ...lines]);
       changes.added.push(column.name);
       continue;
     }
@@ -98,7 +102,7 @@ export function syncModelSource(source: string, table: MigrationTable): { source
       changes.kept.push(column.name);
       continue;
     }
-    replace.set(existing.startLine, lines[existing.startLine].match(/^\s*/)![0] + fresh);
+    replace.set(existing.startLine, block(lines[existing.startLine].match(/^\s*/)![0]));
     for (let i = existing.startLine + 1; i <= existing.endLine; i++) drop.add(i);
     changes.updated.push(column.name);
   }

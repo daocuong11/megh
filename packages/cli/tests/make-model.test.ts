@@ -239,15 +239,33 @@ describe("make:model", () => {
 // Columns read from the migrations (the table is created in 20260101000000_create_users_table.ts).
 @Table("users")
 export class User extends Model {
-  @PrimaryKey() @AutoIncrement() id?: number;
-  @Column() email!: string;
-  @Column({ nullable: true, type: "text" }) name!: string | null;
-  @Column({ type: "boolean" }) is_admin?: boolean;
-  @Column({ nullable: true, type: "json" }) settings!: Record<string, unknown> | null;
-  @Column({ nullable: true, type: "date" }) born_on!: Date | null;
-  @Column({ cast: "number" }) balance!: number;
-  @CreatedAt() created_at?: Date;
-  @UpdatedAt() updated_at?: Date;
+  @PrimaryKey()
+  @AutoIncrement()
+  id?: number;
+
+  @Column()
+  email!: string;
+
+  @Column({ nullable: true, type: "text" })
+  name!: string | null;
+
+  @Column({ type: "boolean" })
+  is_admin?: boolean;
+
+  @Column({ nullable: true, type: "json" })
+  settings!: Record<string, unknown> | null;
+
+  @Column({ nullable: true, type: "date" })
+  born_on!: Date | null;
+
+  @Column({ cast: "number" })
+  balance!: number;
+
+  @CreatedAt()
+  created_at?: Date;
+
+  @UpdatedAt()
+  updated_at?: Date;
 }
 `);
   });
@@ -265,10 +283,10 @@ export class User extends Model {
     );
     makeModel("BlogPost", { cwd: tmp });
     const content = read("src", "models", "blog-post.model.ts");
-    expect(content).toContain("@PrimaryKey() uuid!: string;");
+    expect(content).toContain("@PrimaryKey()\n  uuid!: string;");
     // Postgres returns bigint as text: the cast reads it as a number.
-    expect(content).toContain('@AutoIncrement() @Column({ cast: "number" }) views?: number;');
-    expect(content).toContain("@DeletedAt() deleted_at?: Date | null;");
+    expect(content).toContain('@AutoIncrement()\n  @Column({ cast: "number" })\n  views?: number;');
+    expect(content).toContain("@DeletedAt()\n  deleted_at?: Date | null;");
   });
 
   it("uses an explicit table, or the singular name when that is what exists", () => {
@@ -285,7 +303,7 @@ export class User extends Model {
     const account = read("src", "models", "account.model.ts");
     expect(account).toContain('@Table("app_accounts")');
     // A primary key without auto-increment is not generated: create() requires it.
-    expect(account).toContain("@PrimaryKey() id!: number;");
+    expect(account).toContain("@PrimaryKey()\n  id!: number;");
   });
 
   it("falls back to a placeholder model when no migration creates the table", () => {
@@ -293,7 +311,7 @@ export class User extends Model {
     const content = read("src", "models", "product.model.ts");
     expect(content).toContain("export class Product extends Model");
     expect(content).toContain('@Table("products")');
-    expect(content).toContain("@PrimaryKey() @AutoIncrement() id?: number;");
+    expect(content).toContain("@PrimaryKey()\n  @AutoIncrement()\n  id?: number;");
     expect(content).not.toMatch(/\{(Model|table|statics|fields|source)\}/);
   });
 
@@ -303,6 +321,6 @@ export class User extends Model {
 
     migration("20260101000000_create_users_table.ts", CREATE_USERS);
     expect(await runCli(["make:model", "admin/User", "-t", "users"], { cwd: tmp })).toBe(0);
-    expect(read("src", "admin", "models", "user.model.ts")).toContain("@Column() email!: string;");
+    expect(read("src", "admin", "models", "user.model.ts")).toContain("@Column()\n  email!: string;");
   });
 });
