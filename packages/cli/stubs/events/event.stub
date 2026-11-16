@@ -1,0 +1,17 @@
+import { MeghEvent } from '@meghjs/core';
+
+/** The data the "{Title}" event carries to its listeners. */
+export type {Base}Payload = {
+  id: number; // replace with what listeners need
+};
+
+/**
+ * The "{Title}" event.
+ *
+ * Dispatch it with an `EventDispatcher`, and react to it with a listener
+ * (`megh make:listener <Name> --event {Base}`):
+ *
+ * @example
+ * await new EventDispatcher().dispatch(new {ClassName}({ id: 1 }));
+ */
+export class {ClassName} extends MeghEvent<{Base}Payload> {}

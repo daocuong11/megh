@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { CliError } from "../errors";
 import { log } from "../utils/log";
-import { pascalCase, resolveName, snakeCase, type ResolvedName } from "../utils/names";
+import { kebabCase, pascalCase, resolveName, snakeCase, type ResolvedName } from "../utils/names";
 import { installedVersion, requireProjectRoot, writeFileSafe } from "../utils/project";
 import { trackWrite } from "../utils/changes";
 import { renderStub } from "../utils/stubs";
@@ -38,6 +38,11 @@ const DEFAULT_DIRS = {
   middleware: "middlewares",
   dto: "dtos",
   mail: "mail",
+  event: "events",
+  listener: "listeners",
+  queue: "queues",
+  worker: "workers",
+  task: "tasks",
 } as const;
 
 type Kind = keyof typeof DEFAULT_DIRS;
@@ -466,8 +471,7 @@ export function makeMail(name: string, opts: MakeBaseOptions = {}): string {
   const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
   const n = resolveName(name, "Mail");
   const file = path.join(targetDir(projectRoot, "mail", n.dirs, opts.root), `${n.fileBase}.mail.ts`);
-  const title = n.base.replace(/([a-z\d])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
-  write(file, renderStub("mail/mail.stub", { ClassName: n.className, Title: title }), opts.force, "Mail", projectRoot);
+  write(file, renderStub("mail/mail.stub", { ClassName: n.className, Title: titleOf(n.base) }), opts.force, "Mail", projectRoot);
   if (!usesMail(projectRoot)) {
     log.info("  Turn mail on in src/app.ts with app.useMail(), and set MEGH_MAIL_* in .env.");
   }
@@ -476,11 +480,219 @@ export function makeMail(name: string, opts: MakeBaseOptions = {}): string {
 
 /** Whether src/app.ts already calls useMail(). */
 function usesMail(projectRoot: string) {
+  return /\.useMail\(/.test(appSource(projectRoot));
+}
+
+/** The text of src/app.ts, or "" when there is none. */
+function appSource(projectRoot: string): string {
   try {
-    return /\.useMail\(/.test(fs.readFileSync(path.join(projectRoot, "src", "app.ts"), "utf8"));
+    return fs.readFileSync(path.join(projectRoot, "src", "app.ts"), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Whether src/app.ts already mentions `name` as a whole word. */
+function appMentions(projectRoot: string, name: string): boolean {
+  return new RegExp(`\\b${name}\\b`).test(appSource(projectRoot));
+}
+
+/** "OrderShipped" -> "Order Shipped". */
+function titleOf(base: string): string {
+  return base.replace(/([a-z\d])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2");
+}
+
+// ── Events ───────────────────────────────────────────────────────────────────
+
+/** An event in src/events/<name>.event.ts: `make:event UserCreated` writes `UserCreatedEvent`. */
+export function makeEvent(name: string, opts: MakeBaseOptions = {}): string {
+  const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
+  const n = resolveName(name, "Event");
+  return write(eventFile(projectRoot, n, opts.root), renderEvent(n), opts.force, "Event", projectRoot);
+}
+
+function eventFile(projectRoot: string, n: ResolvedName, root?: string) {
+  return path.join(targetDir(projectRoot, "event", n.dirs, root), `${n.fileBase}.event.ts`);
+}
+
+function renderEvent(n: ResolvedName) {
+  return renderStub("events/event.stub", { ClassName: n.className, Base: n.base, Title: titleOf(n.base) });
+}
+
+export type MakeListenerOptions = MakeBaseOptions & {
+  /** The event it listens to, e.g. `UserCreated`. Created in src/events/ if missing. */
+  event?: string;
+};
+
+/**
+ * A listener in src/listeners/<name>.listener.ts. With `event`, it is typed to
+ * that event, which is created first if it doesn't exist.
+ */
+export function makeListener(name: string, opts: MakeListenerOptions = {}): string {
+  const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
+  const n = resolveName(name, "Listener");
+  const file = path.join(targetDir(projectRoot, "listener", n.dirs, opts.root), `${n.fileBase}.listener.ts`);
+  // Check before creating the event, so a refused listener leaves nothing behind.
+  if (fs.existsSync(file) && !opts.force) {
+    throw new CliError(`${file} already exists. Use -f or --force to overwrite it.`);
+  }
+
+  let eventClass = "MeghEvent";
+  let imports = "import { AppService, MeghEvent, MeghEventListener } from '@meghjs/core';";
+  if (opts.event) {
+    const e = resolveName(opts.event, "Event");
+    const evFile = eventFile(projectRoot, e);
+    ensureDependency(evFile, () => renderEvent(e), "Event", projectRoot);
+    eventClass = e.className;
+    imports =
+      "import { AppService, MeghEventListener } from '@meghjs/core';\n" +
+      `import { ${e.className} } from '${importPath(file, evFile)}';`;
+  }
+
+  write(
+    file,
+    renderStub("listeners/listener.stub", { Imports: imports, ClassName: n.className, EventClass: eventClass }),
+    opts.force,
+    "Listener",
+    projectRoot,
+  );
+  if (!appMentions(projectRoot, n.className)) {
+    log.info(
+      "  Register it once at startup, e.g. in src/app.ts:\n" +
+        `    EventRegistry.getInstance().register(${eventClass}, MeghContainer.get(${n.className}));`,
+    );
+  }
+  return file;
+}
+
+// ── Queue ────────────────────────────────────────────────────────────────────
+
+export type MakeQueueOptions = MakeBaseOptions & {
+  /** The queue's name in Redis. Defaults to the kebab-case name, e.g. `order-export`. */
+  queue?: string;
+};
+
+/** A queue in src/queues/<name>.queue.ts: `make:queue OrderExport` writes `OrderExportQueue`. */
+export function makeQueue(name: string, opts: MakeQueueOptions = {}): string {
+  const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
+  const n = resolveName(name, "Queue");
+  const queueName = queueNameOf(opts.queue, n);
+  const file = path.join(targetDir(projectRoot, "queue", n.dirs, opts.root), `${n.fileBase}.queue.ts`);
+  write(
+    file,
+    renderStub("queues/queue.stub", {
+      ClassName: n.className,
+      Base: n.base,
+      QueueName: queueName,
+      varName: n.varName + "Queue",
+      JobName: "process",
+      JobMethod: "Process",
+    }),
+    opts.force,
+    "Queue",
+    projectRoot,
+  );
+  queueHints(projectRoot, n.className);
+  return file;
+}
+
+export type MakeWorkerOptions = MakeBaseOptions & {
+  /** The queue it consumes. Defaults to the kebab-case name, e.g. `report`. */
+  queue?: string;
+};
+
+/** A worker in src/workers/<name>.worker.ts that consumes a queue filled elsewhere. */
+export function makeWorker(name: string, opts: MakeWorkerOptions = {}): string {
+  const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
+  const n = resolveName(name, "Worker");
+  const queueName = queueNameOf(opts.queue, n);
+  const file = path.join(targetDir(projectRoot, "worker", n.dirs, opts.root), `${n.fileBase}.worker.ts`);
+  write(
+    file,
+    renderStub("workers/worker.stub", { ClassName: n.className, Base: n.base, QueueName: queueName }),
+    opts.force,
+    "Worker",
+    projectRoot,
+  );
+  queueHints(projectRoot, n.className);
+  return file;
+}
+
+function queueNameOf(given: string | undefined, n: ResolvedName): string {
+  const value = given ?? kebabCase(n.base);
+  // BullMQ uses ":" as its key separator, and quotes would break the stub.
+  if (!/^[A-Za-z0-9][\w.-]*$/.test(value)) {
+    throw new CliError(`Invalid queue name "${value}": use letters, digits, ".", "_" and "-".`);
+  }
+  return value;
+}
+
+function queueHints(projectRoot: string, className: string) {
+  if (!appMentions(projectRoot, className)) {
+    log.info(`  Register it in src/app.ts so it starts: app.useWorker([${className}]).`);
+  }
+  if (!declaresDependency(projectRoot, "bullmq")) {
+    log.info("  Queues run on Redis through BullMQ: npm i bullmq ioredis (or set MEGH_QUEUE_DRIVER=memory).");
+  }
+}
+
+function declaresDependency(projectRoot: string, name: string): boolean {
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, "package.json"), "utf8"));
+    return Boolean(pkg.dependencies?.[name] ?? pkg.devDependencies?.[name]);
   } catch {
     return false;
   }
+}
+
+// ── Scheduler ────────────────────────────────────────────────────────────────
+
+export type MakeTaskOptions = MakeBaseOptions & {
+  /** A cron expression (5 fields, or 6 with seconds first). Defaults to hourly. */
+  cron?: string;
+  /** Run every this many milliseconds instead of on a cron. */
+  interval?: string | number;
+};
+
+/** A scheduled task in src/tasks/<name>.task.ts: `make:task CleanupTokens` writes `CleanupTokensTask`. */
+export function makeTask(name: string, opts: MakeTaskOptions = {}): string {
+  const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
+  if (opts.cron !== undefined && opts.interval !== undefined) {
+    throw new CliError("Pass --cron or --interval, not both.");
+  }
+  const n = resolveName(name, "Task");
+  const file = path.join(targetDir(projectRoot, "task", n.dirs, opts.root), `${n.fileBase}.task.ts`);
+
+  let vars: Record<string, string>;
+  if (opts.interval !== undefined) {
+    const ms = Number(opts.interval);
+    if (!Number.isInteger(ms) || ms < 1) {
+      throw new CliError(`Invalid --interval "${opts.interval}": use a whole number of milliseconds.`);
+    }
+    vars = { Decorator: "Interval", DecoratorCall: `@Interval(${ms})`, Schedule: `every ${ms} ms` };
+  } else {
+    const cron = (opts.cron ?? "0 * * * *").trim().replace(/\s+/g, " ");
+    const fields = cron.split(" ").length;
+    if ((fields !== 5 && fields !== 6) || /['"`\\]/.test(cron)) {
+      throw new CliError(`Invalid --cron "${opts.cron}": use 5 fields (or 6 with seconds first), e.g. "0 3 * * *".`);
+    }
+    vars = {
+      Decorator: "Cron",
+      DecoratorCall: `@Cron('${cron}')`,
+      Schedule: opts.cron === undefined ? "every hour, on the hour" : "min hour day month weekday",
+    };
+  }
+
+  write(file, renderStub("tasks/task.stub", { ClassName: n.className, ...vars }), opts.force, "Task", projectRoot);
+
+  const scansTasks = /useScheduler\(\s*\{\s*path/.test(appSource(projectRoot));
+  if (!scansTasks && !appMentions(projectRoot, n.className)) {
+    log.info(
+      `  Register it in src/app.ts: app.useScheduler([${n.className}]),\n` +
+        "  or scan the folder: app.useScheduler({ path: 'src/tasks' }).",
+    );
+  }
+  return file;
 }
 
 export function makeDto(name: string, opts: MakeBaseOptions = {}): string {

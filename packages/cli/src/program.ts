@@ -11,7 +11,12 @@ import {
   makeConfig,
   makeController,
   makeDto,
+  makeEvent,
+  makeListener,
   makeMail,
+  makeQueue,
+  makeTask,
+  makeWorker,
   makeMiddleware,
   makeMigration,
   makeModel,
@@ -24,6 +29,7 @@ import {
 import { listTemplates, makeFromTemplate, scaffoldDomain } from "./generators/scaffold";
 import { AUTH_STRATEGIES, scaffoldAuth, ROLE_MODES, scaffoldRbac } from "./generators/auth";
 import { parseFieldList } from "./templates/fields";
+import { banner } from "./utils/banner";
 import { log } from "./utils/log";
 import { cliVersion } from "./utils/stubs";
 import { withReview } from "./utils/changes";
@@ -78,6 +84,9 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .showHelpAfterError("(run `megh --help` for usage)")
     .showSuggestionAfterError(true)
     .exitOverride();
+  // Root help only (`megh`, `megh --help`); subcommand help stays plain.
+  program.addHelpText("before", () => `${banner()}
+`);
 
   if (run.writeOut || run.writeErr) {
     program.configureOutput({
@@ -362,6 +371,41 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .action(async (name: string, o) => {
       await review(o, () => makeMail(name, { cwd: cwd(), ...o }));
+    });
+
+  make("make:event", ["m:ev"], "Create an event in src/events/<name>.event.ts")
+    .option("--root <dir>", "Folder under src/ to write to (also -rt)")
+    .action((name: string, o) => {
+      makeEvent(name, { cwd: cwd(), ...o });
+    });
+
+  make("make:listener", ["m:lsn"], "Create an event listener in src/listeners/<name>.listener.ts")
+    .option("-e, --event <event>", "The event it handles, e.g. UserCreated (created in src/events/ if missing)")
+    .option("--root <dir>", "Folder under src/ to write to (also -rt)")
+    .action((name: string, o) => {
+      makeListener(name, { cwd: cwd(), ...o });
+    });
+
+  make("make:queue", ["m:q"], "Create a queue (jobs and their handlers) in src/queues/<name>.queue.ts")
+    .option("-q, --queue <name>", "Queue name in Redis (default: kebab-case name)")
+    .option("--root <dir>", "Folder under src/ to write to (also -rt)")
+    .action((name: string, o) => {
+      makeQueue(name, { cwd: cwd(), ...o });
+    });
+
+  make("make:worker", ["m:w"], "Create a worker for a queue filled elsewhere in src/workers/<name>.worker.ts")
+    .option("-q, --queue <name>", "Queue it consumes (default: kebab-case name)")
+    .option("--root <dir>", "Folder under src/ to write to (also -rt)")
+    .action((name: string, o) => {
+      makeWorker(name, { cwd: cwd(), ...o });
+    });
+
+  make("make:task", ["m:task", "make:scheduler"], "Create a scheduled task in src/tasks/<name>.task.ts")
+    .option("--cron <expression>", 'Cron schedule, e.g. "0 3 * * *" (default: hourly)')
+    .option("--interval <ms>", "Run every <ms> milliseconds instead of on a cron")
+    .option("--root <dir>", "Folder under src/ to write to (also -rt)")
+    .action((name: string, o) => {
+      makeTask(name, { cwd: cwd(), ...o });
     });
 
   make("make:dto", ["m:dto"], "Create a class-validator DTO in src/dtos/<name>.dto.ts")
