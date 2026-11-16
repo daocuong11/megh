@@ -159,7 +159,8 @@ export class MeghApplication implements IMeghApplication {
   private hasSwagger = false;
   private globalSwaggerOptions: OpenApiUiOptions | undefined;
   private registerControllerAuto = false;
-  private registerControllerPath = "src/controllers";
+  /** Set by useControllers({ auto: true, path }). Unset: every `controllers/` folder under src/. */
+  private registerControllerPath: string | undefined;
   private controllers: any[] = [];
   private _hasWebsocket = false;
   private scheduler: MeghScheduler = new MeghScheduler();
@@ -713,7 +714,10 @@ export class MeghApplication implements IMeghApplication {
       process.env.TS_NODE_DEV ||
       process.env.TS_NODE_PROJECT ||
       (process as any)[Symbol.for("ts-node.register.instance")];
-    return resolveSourceDir(dir ?? this.registerControllerPath, !!isTsNode);
+    return resolveSourceDir(
+      dir ?? this.registerControllerPath ?? "src",
+      !!isTsNode,
+    );
   }
 
   private async autoControllers(controllersPath?: string) {
@@ -729,9 +733,18 @@ export class MeghApplication implements IMeghApplication {
         encoding: "utf-8",
       }) as string[];
 
+      // Without a path, look in every folder named `controllers` under src/:
+      // src/controllers/** and module folders such as src/users/controllers/**.
+      const inControllersFolder = (file: string) =>
+        file.split(/[\\/]/).slice(0, -1).includes("controllers");
+      const scanAll =
+        controllersPath !== undefined ||
+        this.registerControllerPath !== undefined;
+
       for (const file of files) {
         const isTestFile = /\.(test|spec|e2e-spec)\.(ts|js)$/.test(file);
         if (isTestFile) continue;
+        if (!scanAll && !inControllersFolder(file)) continue;
         if (isTsNode ? file.endsWith(".ts") : file.endsWith(".js")) {
           const filePath = path.join(conDir, file);
           const module = await import(filePath);

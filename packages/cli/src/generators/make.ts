@@ -44,17 +44,30 @@ type Kind = keyof typeof DEFAULT_DIRS;
 function targetDir(projectRoot: string, kind: Kind, dirs: string[], root?: string): string {
   const folder = root ? root.split(/[\\/]+/).filter(Boolean) : [DEFAULT_DIRS[kind]];
   if (folder.some((p) => p === "..")) throw new CliError(`Invalid --root "${root}".`);
-  return path.join(projectRoot, "src", ...folder, ...dirs);
+  // The module folder comes first: `users/user` -> src/users/models/user.model.ts.
+  return path.join(projectRoot, "src", ...dirs, ...folder);
+}
+
+/**
+ * Where an existing `kind` file for `n` lives. Before 0.6.2 a nested name put
+ * the module folder inside the type folder (src/models/users/user.model.ts),
+ * so that location is tried when the current one has no file.
+ */
+function existingFile(projectRoot: string, kind: Kind, n: ResolvedName, suffix: string): string {
+  const file = path.join(targetDir(projectRoot, kind, n.dirs), `${n.fileBase}.${suffix}.ts`);
+  if (fs.existsSync(file) || n.dirs.length === 0) return file;
+  const legacy = path.join(projectRoot, "src", DEFAULT_DIRS[kind], ...n.dirs, `${n.fileBase}.${suffix}.ts`);
+  return fs.existsSync(legacy) ? legacy : file;
 }
 
 /** Files `make:model` / `make:resource` / `make:factory` write for model `name`. */
 export function generatedFiles(projectRoot: string, name: string) {
   const n = resolveName(name, "Model");
   return {
-    model: path.join(targetDir(projectRoot, "model", n.dirs), `${n.fileBase}.model.ts`),
-    dto: path.join(targetDir(projectRoot, "dto", n.dirs), `${n.fileBase}.dto.ts`),
-    service: path.join(targetDir(projectRoot, "service", n.dirs), `${n.fileBase}.service.ts`),
-    controller: path.join(targetDir(projectRoot, "controller", n.dirs), `${n.fileBase}.controller.ts`),
+    model: existingFile(projectRoot, "model", n, "model"),
+    dto: existingFile(projectRoot, "dto", n, "dto"),
+    service: existingFile(projectRoot, "service", n, "service"),
+    controller: existingFile(projectRoot, "controller", n, "controller"),
     factory: path.join(databasePaths(projectRoot).factories, ...n.dirs, `${n.fileBase}.factory.ts`),
   };
 }
@@ -133,7 +146,9 @@ export type UpdateModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
 export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelChanges {
   const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
   const n = resolveName(name, "Model");
-  const file = path.join(targetDir(projectRoot, "model", n.dirs, opts.root), `${n.fileBase}.model.ts`);
+  const file = opts.root
+    ? path.join(targetDir(projectRoot, "model", n.dirs, opts.root), `${n.fileBase}.model.ts`)
+    : existingFile(projectRoot, "model", n, "model");
   const rel = (p: string) => relPath(projectRoot, p);
   if (!fs.existsSync(file)) {
     throw new CliError(`There is no ${n.base} model (${rel(file)}). Create it: megh make:model ${name}`);
@@ -179,7 +194,7 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
     log.warn(`  ${c} has hand-made changes, so it was kept as written; check it against the migration.`);
   }
 
-  const dtoFile = path.join(targetDir(projectRoot, "dto", n.dirs), `${n.fileBase}.dto.ts`);
+  const dtoFile = existingFile(projectRoot, "dto", n, "dto");
   if (opts.dto) {
     const model: ResourceModel = { name: n, file, schema: readModelSchema(result.source, table), typeorm: false };
     if (opts.dryRun) log.info(`  Would rewrite ${rel(dtoFile)}`);
@@ -221,7 +236,7 @@ type ResourceModel = {
  */
 function resolveResourceModel(projectRoot: string, model: string, opts: { orm?: boolean; table?: string } = {}): ResourceModel {
   const name = resolveName(model, "Model");
-  const file = path.join(targetDir(projectRoot, "model", name.dirs), `${name.fileBase}.model.ts`);
+  const file = existingFile(projectRoot, "model", name, "model");
   const exists = fs.existsSync(file);
   if (opts.orm && !exists) return { name, file, create: renderEntityModel(name.base), typeorm: true };
 
@@ -347,8 +362,8 @@ export function makeController(name: string, opts: MakeControllerOptions = {}): 
   if (opts.model) {
     const model = resolveResourceModel(projectRoot, opts.model, { orm: opts.orm });
     const m = model.name;
-    const serviceFile = path.join(targetDir(projectRoot, "service", m.dirs), `${m.fileBase}.service.ts`);
-    const dtoFile = path.join(targetDir(projectRoot, "dto", m.dirs), `${m.fileBase}.dto.ts`);
+    const serviceFile = existingFile(projectRoot, "service", m, "service");
+    const dtoFile = existingFile(projectRoot, "dto", m, "dto");
     content = renderResourceController(model, file, n.className, route, serviceFile, dtoFile);
     // Dependencies first, so a failure leaves no controller pointing at missing files.
     if (!model.typeorm) ensureDependency(dtoFile, () => renderDtoFor(model), "DTO", projectRoot);
@@ -384,9 +399,9 @@ export function makeResource(name: string, opts: MakeResourceOptions = {}): stri
   const model = resolveResourceModel(projectRoot, name, { table: opts.table });
   const m = model.name;
   const files = {
-    service: path.join(targetDir(projectRoot, "service", m.dirs), `${m.fileBase}.service.ts`),
-    controller: path.join(targetDir(projectRoot, "controller", m.dirs), `${m.fileBase}.controller.ts`),
-    dto: path.join(targetDir(projectRoot, "dto", m.dirs), `${m.fileBase}.dto.ts`),
+    service: existingFile(projectRoot, "service", m, "service"),
+    controller: existingFile(projectRoot, "controller", m, "controller"),
+    dto: existingFile(projectRoot, "dto", m, "dto"),
   };
   if (!opts.force) {
     const taken = Object.values(files).filter((f) => fs.existsSync(f) && !(model.typeorm && f === files.dto));
@@ -580,7 +595,7 @@ export type MakeFactoryOptions = Pick<MakeBaseOptions, "cwd" | "force">;
 export function makeFactory(name: string, opts: MakeFactoryOptions = {}): string {
   const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
   const n = resolveName(name.replace(/[-_.]?factory$/i, ""), "Model");
-  const modelFile = path.join(targetDir(projectRoot, "model", n.dirs), `${n.fileBase}.model.ts`);
+  const modelFile = existingFile(projectRoot, "model", n, "model");
   if (!fs.existsSync(modelFile)) {
     throw new CliError(
       `There is no ${n.base} model (${relPath(projectRoot, modelFile)}) to build a factory for. ` +

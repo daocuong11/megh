@@ -303,6 +303,6 @@ export class User extends Model {
 
     migration("20260101000000_create_users_table.ts", CREATE_USERS);
     expect(await runCli(["make:model", "admin/User", "-t", "users"], { cwd: tmp })).toBe(0);
-    expect(read("src", "models", "admin", "user.model.ts")).toContain("@Column() email!: string;");
+    expect(read("src", "admin", "models", "user.model.ts")).toContain("@Column() email!: string;");
   });
 });
