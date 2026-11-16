@@ -44,7 +44,7 @@ describe("make:event", () => {
 
   it("strips an Event suffix and supports folders and --root", () => {
     makeEvent("billing/InvoicePaidEvent", { cwd: tmp });
-    expect(read("src", "events", "billing", "invoice-paid.event.ts")).toContain("class InvoicePaidEvent ");
+    expect(read("src", "billing", "events", "invoice-paid.event.ts")).toContain("class InvoicePaidEvent ");
     makeEvent("OrderPlaced", { cwd: tmp, root: "modules/orders" });
     expect(exists("src", "modules", "orders", "order-placed.event.ts")).toBe(true);
   });
@@ -53,7 +53,7 @@ describe("make:event", () => {
 describe("make:listener", () => {
   it("types the listener to --event and creates the event when missing", () => {
     makeListener("admin/SendWelcomeEmail", { cwd: tmp, event: "UserCreated" });
-    const listener = read("src", "listeners", "admin", "send-welcome-email.listener.ts");
+    const listener = read("src", "admin", "listeners", "send-welcome-email.listener.ts");
     expect(listener).toContain("import { AppService, MeghEventListener } from '@meghjs/core';");
     expect(listener).toContain("import { UserCreatedEvent } from '../../events/user-created.event';");
     expect(listener).toContain("@AppService\nexport class SendWelcomeEmailListener extends MeghEventListener<UserCreatedEvent> {");
