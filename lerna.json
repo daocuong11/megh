@@ -6,6 +6,7 @@
     "version": {
       "allowBranch": "main",
       "conventionalCommits": true,
+      "premajorVersionBump": "force-patch",
       "forcePublish": true,
       "message": "chore(release): %s"
     },
