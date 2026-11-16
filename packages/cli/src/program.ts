@@ -29,6 +29,7 @@ import {
 import { listTemplates, makeFromTemplate, scaffoldDomain } from "./generators/scaffold";
 import { AUTH_STRATEGIES, scaffoldAuth, ROLE_MODES, scaffoldRbac } from "./generators/auth";
 import { parseFieldList } from "./templates/fields";
+import { banner } from "./utils/banner";
 import { log } from "./utils/log";
 import { cliVersion } from "./utils/stubs";
 
@@ -75,6 +76,9 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .showHelpAfterError("(run `megh --help` for usage)")
     .showSuggestionAfterError(true)
     .exitOverride();
+  // Root help only (`megh`, `megh --help`); subcommand help stays plain.
+  program.addHelpText("before", () => `${banner()}
+`);
 
   if (run.writeOut || run.writeErr) {
     program.configureOutput({
