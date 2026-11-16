@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.1](https://github.com/meghjs/megh/compare/v0.6.0...v0.6.1) (2026-11-16)
+
+### Bug Fixes
+
+- **core:** list every mailer in the "No mailer is set" error ([a0e0697](https://github.com/meghjs/megh/commit/a0e0697e8a55ef1c6ff324a05270e702f1d25ce8)), closes [#114](https://github.com/meghjs/megh/issues/114)
+
+### Features
+
+- **core:** add mail with SMTP, log and array mailers ([66e4603](https://github.com/meghjs/megh/commit/66e460324f2dc22b7875c87c9b5b0c01ed1f5498)), closes [#114](https://github.com/meghjs/megh/issues/114)
+- **core:** add SendGrid, Mailgun, Postmark, Resend and failover mailers ([5062ff0](https://github.com/meghjs/megh/commit/5062ff039eff1a893ebbc04ee3e81ac9c700c743)), closes [#114](https://github.com/meghjs/megh/issues/114)
+- **core:** add useSecurityHeaders(), useRateLimit() and @RateLimit() ([7e40bc0](https://github.com/meghjs/megh/commit/7e40bc0bd65af52c17a1584ca04b7362728223b4)), closes [#58](https://github.com/meghjs/megh/issues/58)
+- **core:** merge a mailer's useMail() options over its .env settings ([510c079](https://github.com/meghjs/megh/commit/510c0798a993983dc36237215f8287c69f5e8489)), closes [#114](https://github.com/meghjs/megh/issues/114)
+- **core:** queue mail with queue() and later() ([c706873](https://github.com/meghjs/megh/commit/c7068734478f85dfbb25fc57f24ef48a6828e403)), closes [#114](https://github.com/meghjs/megh/issues/114)
+
 # [0.6.0](https://github.com/meghjs/megh/compare/v0.5.5...v0.6.0) (2026-11-12)
 
 - feat(core)!: default run() to the PORT environment variable ([3261312](https://github.com/meghjs/megh/commit/3261312d2670baa079ee106973af73c98dbd8a07)), closes [#102](https://github.com/meghjs/megh/issues/102)

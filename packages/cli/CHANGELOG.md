@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.1](https://github.com/meghjs/megh/compare/v0.6.0...v0.6.1) (2026-11-16)
+
+### Bug Fixes
+
+* **cli:** install the OpenAPI packages in new projects ([2c04d2b](https://github.com/meghjs/megh/commit/2c04d2b636d1d20bb4127c2223e1933e10132c92))
+
+### Features
+
+* **cli:** add make:mail and a mail feature for megh new ([cbfd672](https://github.com/meghjs/megh/commit/cbfd6722d32059c6f6716ab5f43399ed6faa3f48)), closes [#114](https://github.com/meghjs/megh/issues/114)
+* **cli:** document generated resource services with JSDoc ([3368039](https://github.com/meghjs/megh/commit/3368039a1f03f29457a7468487dcae268d555bcd)), closes [#111](https://github.com/meghjs/megh/issues/111)
+* **cli:** run git init in new projects ([a16a01c](https://github.com/meghjs/megh/commit/a16a01cbbd4c4bd12602a03dbac42518100137c2))
+
+
+
 # [0.6.0](https://github.com/meghjs/megh/compare/v0.5.5...v0.6.0) (2026-11-12)
 
 ### Bug Fixes
