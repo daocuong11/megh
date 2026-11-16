@@ -9,7 +9,7 @@ npx @meghjs/cli new my_api
 ```
 
 You are prompted for a package manager and for optional features (OpenAPI,
-CORS, MeghORM, TypeORM, Knex, Scalar UI, Mail). The generated project uses `@meghjs/core`'s
+CORS, MeghORM). The generated project uses `@meghjs/core`'s
 `Megh.createApplication()` and is ready to run:
 
 ```sh
@@ -46,7 +46,8 @@ npm run start:dev
 
 `-f` / `--force` overwrites an existing file. `-r` / `--resource` generates a
 full REST skeleton. `--root <dir>` (also `-rt`) writes under `src/<dir>`
-instead of the default folder. Names may be nested, e.g. `admin/User`.
+instead of the default folder. Names may be nested, e.g. `admin/User`: the module folder comes first, so
+`make:model admin/User` writes `src/admin/models/user.model.ts`.
 Run `megh <command> --help` for details.
 
 Generated controllers must be registered in your app with
@@ -109,8 +110,8 @@ npx megh make:mail OrderShipped
 Generates `src/mail/order-shipped.mail.ts`, an `OrderShippedMail` class
 extending `Mailable` with `envelope()`, `content()` and `attachments()`. Send it
 with the injected `Mailer`: `mailer.to(user.email).send(new OrderShippedMail())`.
-Mail must be turned on in `src/app.ts` with `app.useMail()`; projects created
-with the `mail` feature already have it.
+Mail must be turned on in `src/app.ts` with `app.useMail()`, and SMTP needs
+`npm i nodemailer`.
 
 ### Config
 
