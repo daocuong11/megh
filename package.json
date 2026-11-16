@@ -16,7 +16,7 @@
     "docs:build": "npm run build --prefix docs",
     "mirror": "bash scripts/mirror.sh",
     "prepare": "husky",
-    "version": "node scripts/sync-peer-ranges.js"
+    "version": "node scripts/sync-peer-ranges.js && node scripts/sync-docs-version.js"
   },
   "devDependencies": {
     "husky": "^9.1.7",
