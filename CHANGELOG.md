@@ -3,6 +3,17 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.3](https://github.com/meghjs/megh/compare/v0.6.2...v0.6.3) (2026-11-16)
+
+### Bug Fixes
+
+* **cli:** make the CLI tests pass under lerna and the module-first layout ([7d7b7fd](https://github.com/meghjs/megh/commit/7d7b7fdc1a0ee0c4f3c89eaf8f2903751390e8ff)), closes [#124](https://github.com/meghjs/megh/issues/124)
+
+### Features
+
+* **cli:** shrink the Megh logo to about 60% of its size ([3cf87ac](https://github.com/meghjs/megh/commit/3cf87acc3ed9e1524f5a02a3cf5bc8ac27b250d4))
+
+
 ## [0.6.2](https://github.com/meghjs/megh/compare/v0.6.1...v0.6.2) (2026-11-16)
 
 ### Bug Fixes
