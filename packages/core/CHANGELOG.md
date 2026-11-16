@@ -3,6 +3,12 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.2](https://github.com/meghjs/megh/compare/v0.6.1...v0.6.2) (2026-11-16)
+
+### Bug Fixes
+
+- **cli:** put the module folder before the type folder in make:* ([9dec4ee](https://github.com/meghjs/megh/commit/9dec4ee3e13969e4ffbcbacab5cfd251faf2e0be))
+
 ## [0.6.1](https://github.com/meghjs/megh/compare/v0.6.0...v0.6.1) (2026-11-16)
 
 ### Bug Fixes

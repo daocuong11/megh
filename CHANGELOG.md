@@ -3,6 +3,20 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.2](https://github.com/meghjs/megh/compare/v0.6.1...v0.6.2) (2026-11-16)
+
+### Bug Fixes
+
+* **cli:** put the module folder before the type folder in make:* ([9dec4ee](https://github.com/meghjs/megh/commit/9dec4ee3e13969e4ffbcbacab5cfd251faf2e0be))
+
+### Features
+
+* **cli:** add make:event, make:listener, make:queue, make:worker and make:task ([2e55e46](https://github.com/meghjs/megh/commit/2e55e469e9e4a8edd5370ed6dde9d2f1d2752b37))
+* **cli:** rename update:model to sync:model and review changes before writing ([bd97a70](https://github.com/meghjs/megh/commit/bd97a70115ff38dcbe084e8a9d290f230f6d73f9))
+* **cli:** show the Megh logo on megh new and the root help ([5f57bd1](https://github.com/meghjs/megh/commit/5f57bd171ee7803e94e8a05439063f9292a8f025))
+* **cli:** write each model decorator on its own line ([0e90f44](https://github.com/meghjs/megh/commit/0e90f44d7032ce211d292926ddcafa711c032cbf))
+
+
 ## [0.6.1](https://github.com/meghjs/megh/compare/v0.6.0...v0.6.1) (2026-11-16)
 
 ### Bug Fixes
