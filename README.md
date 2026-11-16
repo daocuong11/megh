@@ -1290,6 +1290,8 @@ dispatches jobs without Redis.
   (`app.run(port, { host })` to change it). It handles `SIGTERM`/`SIGINT` by
   stopping the scheduler, closing registered workers and the cache, and gives
   up after `shutdownTimeout`.
+- Add `app.useSecurityHeaders()` and `app.useRateLimit()`. See
+  [Security Hardening](https://meghjs.github.io/production/security).
 - Add `app.useHealth()` for `/health` and `/ready` probes. See
   [Health Checks](https://meghjs.github.io/advanced/health).
 - Register an authorizer if you use `@Authorized`; without one those routes

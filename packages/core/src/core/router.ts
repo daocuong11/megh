@@ -35,6 +35,12 @@ import {
 } from "../errors/http-exceptions";
 import { getDeclaredFilters } from "../errors/exception-filter";
 import {
+  RATE_LIMIT_CONFIG_KEY,
+  RouteRateLimitOptions,
+  assertRouteRateLimit,
+  getDeclaredRateLimit,
+} from "../security/rate-limit";
+import {
   compileValidator,
   CompiledValidator,
 } from "../common/utils/compiled-validation";
@@ -291,6 +297,8 @@ export class MeghRouter {
   private authenticationHandler?: Constructor<any>;
 
   private compiledValidation: boolean;
+  /** True once a mapped route declares its own rate limit. */
+  hasRouteRateLimits = false;
 
   constructor(
     app: FastifyInstance,
@@ -586,6 +594,9 @@ export class MeghRouter {
         resolveFilter,
       );
 
+      const _rateLimit = getDeclaredRateLimit(ctrl.constructor, method);
+      if (_rateLimit) this.hasRouteRateLimits = true;
+
       // DTOs with Megh's decorators use Megh's validator. class-validator
       // DTOs use class-validator, or (experimental flag) a validator compiled
       // from its metadata; see common/utils/compiled-validation.ts.
@@ -608,7 +619,12 @@ export class MeghRouter {
         method: toFastifyMethod(methodmetaOptions.method),
         schema: routeSchema,
         attachValidation: isMultipart,
-        config: { [ROUTE_FILTERS_CONFIG_KEY]: _routeFilters },
+        config: {
+          [ROUTE_FILTERS_CONFIG_KEY]: _routeFilters,
+          ...(_rateLimit !== undefined && {
+            [RATE_LIMIT_CONFIG_KEY]: _rateLimit,
+          }),
+        },
         handler: async (req, res) => {
           let reqClone = req as unknown as IRequest;
 
@@ -883,6 +899,16 @@ export class MeghRouter {
         return route;
       },
 
+      /**
+       * Give this route its own rate limit, like `@RateLimit()`, or pass
+       * `false` to leave it unlimited.
+       */
+      rateLimit: (options: RouteRateLimitOptions | false) => {
+        assertRouteRateLimit(options);
+        entry().rateLimit = options;
+        return route;
+      },
+
       useOpenApi: (options: OpenApiOptions) => {
         entry().schema = options;
         return route;
@@ -940,10 +966,15 @@ export class MeghRouter {
         );
       }
 
+      if (value.rateLimit) this.hasRouteRateLimits = true;
+
       this.app.route({
         method: toFastifyMethod(m),
         url: r,
         schema: routeSchema,
+        ...(value.rateLimit !== undefined && {
+          config: { [RATE_LIMIT_CONFIG_KEY]: value.rateLimit },
+        }),
         // Same order as controller routes: middleware → authentication →
         // authorization → handler.
         handler: async (req, res) => {
