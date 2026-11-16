@@ -4,12 +4,13 @@ import { CliError } from "../errors";
 import { log } from "../utils/log";
 import { pascalCase, resolveName, snakeCase, type ResolvedName } from "../utils/names";
 import { installedVersion, requireProjectRoot, writeFileSafe } from "../utils/project";
+import { trackWrite } from "../utils/changes";
 import { renderStub } from "../utils/stubs";
 import { databasePaths } from "../commands/migrate";
 import { readMigrationSchema } from "./migration-schema";
 import { pluralRoute, pluralize, renderBlankOrmModel, renderOrmModel } from "./orm-model";
 import { readModelSchema, renderResourceDto, type ResourceSchema } from "./resource";
-import { syncModelSource, type ModelChanges } from "./update-model";
+import { syncModelSource, type ModelChanges } from "./sync-model";
 import { renderFactory, type ForeignKey } from "./factory";
 
 export type MakeBaseOptions = {
@@ -129,7 +130,7 @@ export function makeModel(name: string, opts: MakeModelOptions = {}): string {
   return file;
 }
 
-export type UpdateModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
+export type SyncModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
   /** Table to read (default: the model's `@Table`, else the plural snake_case name). */
   table?: string;
   /** Also rewrite the model's DTO file from the updated columns. */
@@ -139,11 +140,11 @@ export type UpdateModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
 };
 
 /**
- * `update:model user`: sync an existing model's column fields with its table
+ * `sync:model user`: sync an existing model's column fields with its table
  * as the migrations now leave it (after an alter-table migration, say). Only
  * the column declarations change; relations, methods and other code stay.
  */
-export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelChanges {
+export function syncModel(name: string, opts: SyncModelOptions = {}): ModelChanges {
   const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
   const n = resolveName(name, "Model");
   const file = opts.root
@@ -155,11 +156,11 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
   }
   const source = fs.readFileSync(file, "utf8");
   if (/@Entity\s*\(/.test(source)) {
-    throw new CliError(`${rel(file)} is a TypeORM entity; update:model only updates Megh ORM models.`);
+    throw new CliError(`${rel(file)} is a TypeORM entity; sync:model only syncs Megh ORM models.`);
   }
   if (!/@Table\s*\(/.test(source)) {
     throw new CliError(
-      `${rel(file)} declares its columns without decorators (static table/casts), which update:model ` +
+      `${rel(file)} declares its columns without decorators (static table/casts), which sync:model ` +
         `can't edit safely. Regenerate it with: megh make:model ${name} --force (then re-add relations and methods).`,
     );
   }
@@ -180,11 +181,14 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
   const result = syncModelSource(source, table);
   const { added, removed, updated, kept } = result.changes;
   const changed = result.source !== source;
-  const prefix = opts.dryRun ? "Would update" : "Model updated";
+  const prefix = opts.dryRun ? "Would sync" : "Model synced";
   if (!changed) {
     log.info(`${rel(file)} already matches the "${table.name}" table.`);
   } else {
-    if (!opts.dryRun) fs.writeFileSync(file, result.source, "utf8");
+    if (!opts.dryRun) {
+      trackWrite(file);
+      fs.writeFileSync(file, result.source, "utf8");
+    }
     log.success(`${prefix}: ${rel(file)}`);
   }
   for (const c of added) log.info(`  + ${c}`);
@@ -204,6 +208,11 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
   }
   return result.changes;
 }
+
+/** @deprecated Renamed to {@link syncModel}. */
+export const updateModel = syncModel;
+/** @deprecated Renamed to {@link SyncModelOptions}. */
+export type UpdateModelOptions = SyncModelOptions;
 
 function renderEntityModel(model: string) {
   return renderStub("models/entity-model.stub", { Model: model, table: snakeCase(model) });

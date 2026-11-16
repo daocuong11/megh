@@ -29,7 +29,7 @@ npm run start:dev
 | `route:list` | `routes` | `--json`, `--static` | List the app's routes |
 | `make:model` | `m:m` | `-f`, `--orm`, `--root <dir>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a model / TypeORM entity; with `--template` / `--fields`, also its migration |
 | `make:resource` | `m:r` | `-f`, `-t <table>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a model's DTOs, CRUD service and controller |
-| `update:model` | `u:m` | `-t <table>`, `--dto`, `--dry-run`, `--root <dir>` | Sync a model's columns with its migrations, keeping relations and methods |
+| `sync:model` | `s:m`, `update:model` | `-t <table>`, `--dto`, `--dry-run`, `-y`, `--root <dir>` | Sync a model's columns with its migrations, keeping relations and methods |
 | `make:controller` | `m:c` | `-f`, `-r`, `-m <model>`, `--orm`, `--root <dir>`, `--base-path` | Create a controller |
 | `make:service` | `m:s` | `-f`, `-r`, `-m <model>`, `--orm`, `--root <dir>` | Create a service |
 | `make:config` | `m:cnf` | `-f`, `--root <dir>` | Create an `@AppConfig` class |
@@ -44,7 +44,8 @@ npm run start:dev
 | `scaffold:rbac` | `sc:rbac` | `--roles <single\|multiple>`, `--permissions`, `-f`, `-y` | Add roles and permissions to an app's users |
 | `template:list [domain]` | `templates` | `--json` | List the model templates |
 
-`-f` / `--force` overwrites an existing file. `-r` / `--resource` generates a
+`-f` / `--force` overwrites an existing file, after showing a diff, the files
+that import it, and asking (`-y` skips the question). `-r` / `--resource` generates a
 full REST skeleton. `--root <dir>` (also `-rt`) writes under `src/<dir>`
 instead of the default folder. Names may be nested, e.g. `admin/User`: the module folder comes first, so
 `make:model admin/User` writes `src/admin/models/user.model.ts`.
