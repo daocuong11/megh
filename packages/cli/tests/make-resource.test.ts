@@ -142,10 +142,37 @@ describe("make:resource from a migration", () => {
 }`,
     );
     makeResource("admin/Category", { cwd: tmp });
-    const ctrl = read("src", "controllers", "admin", "category.controller.ts");
+    // The module folder comes first: src/admin/{models,services,controllers,dtos}/.
+    const ctrl = read("src", "admin", "controllers", "category.controller.ts");
     expect(ctrl).toContain("@ApiController('/admin/categories')");
-    expect(ctrl).toContain("from '../../dtos/admin/category.dto'");
-    expect(read("src", "dtos", "admin", "category.dto.ts")).toContain("class ListCategoriesQuery");
+    expect(ctrl).toContain("from '../dtos/category.dto'");
+    expect(ctrl).toContain("from '../services/category.service'");
+    expect(read("src", "admin", "dtos", "category.dto.ts")).toContain("class ListCategoriesQuery");
+    expect(exists("src", "admin", "models", "category.model.ts")).toBe(true);
+    expect(exists("src", "controllers")).toBe(false);
+  });
+
+  it("finds a model in the pre-0.6.2 location (src/models/admin/)", () => {
+    writeFile(
+      "src/database/migrations/20260102000000_create_categories_table.ts",
+      `export async function up(db) {
+  await db.schema.createTable("categories").addColumn("id", "integer", (c) => c.primaryKey()).addColumn("name", "text").execute();
+}`,
+    );
+    writeFile(
+      "src/models/admin/category.model.ts",
+      `import { Column, Model, Table } from "@meghjs/core";
+@Table("categories")
+export class Category extends Model {
+  @Column() declare id: number;
+  @Column() declare name: string;
+}
+`,
+    );
+    makeResource("admin/Category", { cwd: tmp });
+    const service = read("src", "admin", "services", "category.service.ts");
+    expect(service).toContain("from '../../models/admin/category.model'");
+    expect(exists("src", "admin", "models", "category.model.ts")).toBe(false);
   });
 
   it("reads another table with --table", () => {

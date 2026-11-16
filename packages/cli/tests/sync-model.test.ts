@@ -3,13 +3,13 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { runCli } from "../src/program";
-import { makeModel, makeResource, updateModel } from "../src/generators/make";
+import { makeModel, makeResource, syncModel } from "../src/generators/make";
 
 let tmp: string;
 let logs: string[];
 
 beforeEach(() => {
-  tmp = fs.mkdtempSync(path.join(os.tmpdir(), "megh-update-model-"));
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), "megh-sync-model-"));
   fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify({ name: "x" }));
   logs = [];
   vi.spyOn(console, "log").mockImplementation((msg) => void logs.push(String(msg)));
@@ -83,7 +83,7 @@ function makeUserModel() {
   fs.writeFileSync(modelFile(), handWritten);
 }
 
-describe("update:model", () => {
+describe("sync:model", () => {
   it("adds, removes and rewrites columns after an alter migration, keeping hand-written code", async () => {
     makeUserModel();
     migration(
@@ -94,12 +94,12 @@ describe("update:model", () => {
       table.renameColumn("name", "full_name");`),
     );
 
-    expect(await runCli(["update:model", "user"], { cwd: tmp })).toBe(0);
+    expect(await runCli(["sync:model", "user"], { cwd: tmp })).toBe(0);
     const model = readModel();
 
-    expect(model).toContain("@Column() full_name!: string;");
-    expect(model).toContain('@Column({ nullable: true, type: "string" }) phone!: string | null;');
-    expect(model).toContain('@Column({ type: "boolean" }) is_active?: boolean;');
+    expect(model).toContain("@Column()\n  full_name!: string;");
+    expect(model).toContain('@Column({ nullable: true, type: "string" })\n  phone!: string | null;');
+    expect(model).toContain('@Column({ type: "boolean" })\n  is_active?: boolean;');
     expect(model).not.toMatch(/\bage\b/);
     expect(model).not.toMatch(/\bname!:/);
     // Hand-written code is untouched.
@@ -119,7 +119,7 @@ describe("update:model", () => {
     fs.writeFileSync(
       modelFile(),
       readModel().replace(
-        "@Column() name!: string;",
+        "@Column()\n  name!: string;",
         '/** Shown in the UI. */\n  @Column({ name: "name" }) displayName!: string;',
       ),
     );
@@ -131,7 +131,7 @@ describe("update:model", () => {
       table.string("name").nullable();`),
     );
 
-    const changes = updateModel("user", { cwd: tmp });
+    const changes = syncModel("user", { cwd: tmp });
     const model = readModel();
     expect(model).toContain('/** Shown in the UI. */\n  @Column({ name: "name" }) displayName!: string;');
     expect(changes.kept).toEqual(["name"]);
@@ -150,11 +150,11 @@ describe("update:model", () => {
     );
     migration("20260102000000_alter_users_table.ts", alter(`table.dropColumn("age");`));
 
-    updateModel("user", { cwd: tmp });
+    syncModel("user", { cwd: tmp });
     const model = readModel();
     expect(model).not.toContain("Years");
     expect(model).not.toContain("age");
-    expect(model).toContain("@Column() name!: string;");
+    expect(model).toContain("@Column()\n  name!: string;");
   });
 
   it("fixes the decorator imports", () => {
@@ -170,18 +170,18 @@ describe("update:model", () => {
       table.softDeletes();`),
     );
 
-    updateModel("user", { cwd: tmp });
+    syncModel("user", { cwd: tmp });
     const model = readModel();
     expect(model).toMatch(
       /import \{ AutoIncrement, Column, CreatedAt, DeletedAt, Model, PrimaryKey, Table, UpdatedAt \} from "@meghjs\/core";/,
     );
-    expect(model).toContain("@DeletedAt() deleted_at?: Date | null;");
+    expect(model).toContain("@DeletedAt()\n  deleted_at?: Date | null;");
   });
 
   it("does nothing when the model already matches", () => {
     makeUserModel();
     const before = readModel();
-    const changes = updateModel("user", { cwd: tmp });
+    const changes = syncModel("user", { cwd: tmp });
     expect(readModel()).toBe(before);
     expect(changes).toEqual({ added: [], removed: [], updated: [], kept: [] });
     expect(logs.join("\n")).toMatch(/already matches the "users" table/);
@@ -191,9 +191,12 @@ describe("update:model", () => {
     makeUserModel();
     const before = readModel();
     migration("20260102000000_alter_users_table.ts", alter(`table.string("phone").nullable();`));
-    expect(await runCli(["u:m", "user", "--dry-run"], { cwd: tmp })).toBe(0);
+    expect(await runCli(["s:m", "user", "--dry-run"], { cwd: tmp })).toBe(0);
     expect(readModel()).toBe(before);
-    expect(logs.join("\n")).toMatch(/Would update[\s\S]*\+ phone/);
+    const out = logs.join("\n");
+    expect(out).toMatch(/~ changed\s+src\/models\/user\.model\.ts/);
+    expect(out).toContain("+   phone!: string | null;");
+    expect(out).toContain("Dry run: nothing was written.");
   });
 
   it("--dto rewrites the DTO; without it, points out the stale DTO", async () => {
@@ -202,7 +205,7 @@ describe("update:model", () => {
     const dto = path.join(tmp, "src", "dtos", "user.dto.ts");
     migration("20260102000000_alter_users_table.ts", alter(`table.string("phone").nullable();`));
 
-    updateModel("user", { cwd: tmp });
+    syncModel("user", { cwd: tmp });
     expect(fs.readFileSync(dto, "utf8")).not.toContain("phone");
     expect(logs.join("\n")).toMatch(/user\.dto\.ts may be out of date: rerun with --dto/);
 
@@ -214,13 +217,13 @@ describe("update:model", () => {
   });
 
   it("explains what to do for a missing model, a static model or a missing table", () => {
-    expect(() => updateModel("user", { cwd: tmp })).toThrow(/Create it: megh make:model user/);
+    expect(() => syncModel("user", { cwd: tmp })).toThrow(/Create it: megh make:model user/);
 
     fs.mkdirSync(path.dirname(modelFile()), { recursive: true });
     fs.writeFileSync(modelFile(), 'export class User extends Model {\n  static readonly table = "users";\n}\n');
-    expect(() => updateModel("user", { cwd: tmp })).toThrow(/without decorators[\s\S]*make:model user --force/);
+    expect(() => syncModel("user", { cwd: tmp })).toThrow(/without decorators[\s\S]*make:model user --force/);
 
     fs.writeFileSync(modelFile(), '@Table("users")\nexport class User extends Model {\n}\n');
-    expect(() => updateModel("user", { cwd: tmp })).toThrow(/No migration .* creates the "users" table/);
+    expect(() => syncModel("user", { cwd: tmp })).toThrow(/No migration .* creates the "users" table/);
   });
 });

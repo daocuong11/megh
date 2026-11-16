@@ -346,3 +346,69 @@ ScheduledTask()(ReportTask);
     ]);
   });
 });
+
+describe("useControllers({ auto: true })", () => {
+  let dir: string;
+  const cwd = process.cwd();
+  const savedTsNode = process.env.TS_NODE_DEV;
+
+  const controller = (name: string) => {
+    const container = path
+      .resolve(__dirname, "../common/container")
+      .replace(/\\/g, "/");
+    return `import { API_CONTROLLER_METADATA_KEY } from "${container}";
+export class ${name} {}
+Reflect.defineMetadata(API_CONTROLLER_METADATA_KEY, true, ${name});
+`;
+  };
+  const put = (file: string, content: string) => {
+    fs.mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    fs.writeFileSync(path.join(dir, file), content);
+  };
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "megh-controllers-"));
+    process.env.TS_NODE_DEV = "1";
+    process.chdir(dir);
+    put("src/controllers/home.controller.ts", controller("HomeController"));
+    put(
+      "src/users/controllers/user.controller.ts",
+      controller("UserController"),
+    );
+    put(
+      "src/users/services/user.service.ts",
+      controller("NotInControllersFolder"),
+    );
+    // Importing app.ts would start the app; the scan must leave it alone.
+    put("src/app.ts", "throw new Error(\"app.ts was imported\");\n");
+  });
+
+  afterEach(() => {
+    process.chdir(cwd);
+    fs.rmSync(dir, { recursive: true, force: true });
+    if (savedTsNode === undefined) delete process.env.TS_NODE_DEV;
+    else process.env.TS_NODE_DEV = savedTsNode;
+  });
+
+  const scan = async (path?: string) => {
+    const app = MeghApplication.getInternalApp() as any;
+    app.controllers = [];
+    app.registerControllerPath = undefined;
+    app.useControllers(path ? { auto: true, path } : { auto: true });
+    await app.autoControllers();
+    return app.controllers.map((c: any) => c.name).sort();
+  };
+
+  it("finds every controllers/ folder under src/ by default", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await scan()).toEqual(["HomeController", "UserController"]);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("scans everything in an explicit path", async () => {
+    expect(await scan("src/users")).toEqual([
+      "NotInControllersFolder",
+      "UserController",
+    ]);
+  });
+});

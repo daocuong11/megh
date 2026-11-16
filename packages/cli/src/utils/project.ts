@@ -1,4 +1,5 @@
 import fs from "fs";
+import { trackWrite } from "./changes";
 import path from "path";
 import { CliError } from "../errors";
 
@@ -57,6 +58,7 @@ export function writeFileSafe(file: string, content: string, force = false): voi
   if (fs.existsSync(file) && !force) {
     throw new CliError(`${file} already exists. Use -f or --force to overwrite it.`);
   }
+  trackWrite(file);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, content, "utf8");
 }

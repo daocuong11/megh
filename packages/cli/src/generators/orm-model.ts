@@ -111,7 +111,7 @@ export function renderOrmModel(model: string, table: MigrationTable): string {
   const fields = table.columns.map((column) => {
     const { decorators, field } = renderField(column);
     for (const d of decorators) imports.add(d.match(/^@(\w+)/)![1]);
-    return `${decorators.join(" ")} ${field}`;
+    return fieldLines(decorators, field).join("\n  ");
   });
 
   return renderStub("models/orm-model.stub", {
@@ -119,8 +119,13 @@ export function renderOrmModel(model: string, table: MigrationTable): string {
     Model: model,
     table: q(table.name),
     source: table.createdIn,
-    fields: fields.join("\n  "),
+    fields: fields.join("\n\n  "),
   });
+}
+
+/** One column as lines: each decorator on its own line, then the property. */
+export function fieldLines(decorators: string[], field: string): string[] {
+  return [...decorators, field];
 }
 
 /** The decorators and declaration of one column. */

@@ -5,7 +5,7 @@ import { CliError } from "../errors";
 import { databasePaths } from "../commands/migrate";
 import { log } from "../utils/log";
 import { installedVersion, requireProjectRoot, writeFileSafe } from "../utils/project";
-import { generatedFiles, makeModel, migrationTimestamp, updateModel } from "./make";
+import { generatedFiles, makeModel, migrationTimestamp, syncModel } from "./make";
 import { readMigrationSchema } from "./migration-schema";
 import { firstFreeTimestamp, scaffold, type Target } from "./scaffold";
 import { allDomains, findTemplate, type ModelTemplate } from "../templates";
@@ -458,7 +458,7 @@ async function generate(projectRoot: string, choice: AuthChoice, opts: AuthOptio
     }
     writeFileSafe(file, renderAlterMigration("users", columns, dialect));
     log.success(`Migration created: ${relPath(projectRoot, file)} (${addColumns.map((f) => f.name).join(", ")})`);
-    if (fs.existsSync(generatedFiles(projectRoot, "User").model)) updateModel("User", { cwd: projectRoot });
+    if (fs.existsSync(generatedFiles(projectRoot, "User").model)) syncModel("User", { cwd: projectRoot });
     else makeModel("User", { cwd: projectRoot });
   } else if (existingUsers && !fs.existsSync(generatedFiles(projectRoot, "User").model)) {
     makeModel("User", { cwd: projectRoot });

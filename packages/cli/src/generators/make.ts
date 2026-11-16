@@ -4,12 +4,13 @@ import { CliError } from "../errors";
 import { log } from "../utils/log";
 import { kebabCase, pascalCase, resolveName, snakeCase, type ResolvedName } from "../utils/names";
 import { installedVersion, requireProjectRoot, writeFileSafe } from "../utils/project";
+import { trackWrite } from "../utils/changes";
 import { renderStub } from "../utils/stubs";
 import { databasePaths } from "../commands/migrate";
 import { readMigrationSchema } from "./migration-schema";
 import { pluralRoute, pluralize, renderBlankOrmModel, renderOrmModel } from "./orm-model";
 import { readModelSchema, renderResourceDto, type ResourceSchema } from "./resource";
-import { syncModelSource, type ModelChanges } from "./update-model";
+import { syncModelSource, type ModelChanges } from "./sync-model";
 import { renderFactory, type ForeignKey } from "./factory";
 
 export type MakeBaseOptions = {
@@ -49,17 +50,30 @@ type Kind = keyof typeof DEFAULT_DIRS;
 function targetDir(projectRoot: string, kind: Kind, dirs: string[], root?: string): string {
   const folder = root ? root.split(/[\\/]+/).filter(Boolean) : [DEFAULT_DIRS[kind]];
   if (folder.some((p) => p === "..")) throw new CliError(`Invalid --root "${root}".`);
-  return path.join(projectRoot, "src", ...folder, ...dirs);
+  // The module folder comes first: `users/user` -> src/users/models/user.model.ts.
+  return path.join(projectRoot, "src", ...dirs, ...folder);
+}
+
+/**
+ * Where an existing `kind` file for `n` lives. Before 0.6.2 a nested name put
+ * the module folder inside the type folder (src/models/users/user.model.ts),
+ * so that location is tried when the current one has no file.
+ */
+function existingFile(projectRoot: string, kind: Kind, n: ResolvedName, suffix: string): string {
+  const file = path.join(targetDir(projectRoot, kind, n.dirs), `${n.fileBase}.${suffix}.ts`);
+  if (fs.existsSync(file) || n.dirs.length === 0) return file;
+  const legacy = path.join(projectRoot, "src", DEFAULT_DIRS[kind], ...n.dirs, `${n.fileBase}.${suffix}.ts`);
+  return fs.existsSync(legacy) ? legacy : file;
 }
 
 /** Files `make:model` / `make:resource` / `make:factory` write for model `name`. */
 export function generatedFiles(projectRoot: string, name: string) {
   const n = resolveName(name, "Model");
   return {
-    model: path.join(targetDir(projectRoot, "model", n.dirs), `${n.fileBase}.model.ts`),
-    dto: path.join(targetDir(projectRoot, "dto", n.dirs), `${n.fileBase}.dto.ts`),
-    service: path.join(targetDir(projectRoot, "service", n.dirs), `${n.fileBase}.service.ts`),
-    controller: path.join(targetDir(projectRoot, "controller", n.dirs), `${n.fileBase}.controller.ts`),
+    model: existingFile(projectRoot, "model", n, "model"),
+    dto: existingFile(projectRoot, "dto", n, "dto"),
+    service: existingFile(projectRoot, "service", n, "service"),
+    controller: existingFile(projectRoot, "controller", n, "controller"),
     factory: path.join(databasePaths(projectRoot).factories, ...n.dirs, `${n.fileBase}.factory.ts`),
   };
 }
@@ -121,7 +135,7 @@ export function makeModel(name: string, opts: MakeModelOptions = {}): string {
   return file;
 }
 
-export type UpdateModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
+export type SyncModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
   /** Table to read (default: the model's `@Table`, else the plural snake_case name). */
   table?: string;
   /** Also rewrite the model's DTO file from the updated columns. */
@@ -131,25 +145,27 @@ export type UpdateModelOptions = Pick<MakeBaseOptions, "cwd" | "root"> & {
 };
 
 /**
- * `update:model user`: sync an existing model's column fields with its table
+ * `sync:model user`: sync an existing model's column fields with its table
  * as the migrations now leave it (after an alter-table migration, say). Only
  * the column declarations change; relations, methods and other code stay.
  */
-export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelChanges {
+export function syncModel(name: string, opts: SyncModelOptions = {}): ModelChanges {
   const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
   const n = resolveName(name, "Model");
-  const file = path.join(targetDir(projectRoot, "model", n.dirs, opts.root), `${n.fileBase}.model.ts`);
+  const file = opts.root
+    ? path.join(targetDir(projectRoot, "model", n.dirs, opts.root), `${n.fileBase}.model.ts`)
+    : existingFile(projectRoot, "model", n, "model");
   const rel = (p: string) => relPath(projectRoot, p);
   if (!fs.existsSync(file)) {
     throw new CliError(`There is no ${n.base} model (${rel(file)}). Create it: megh make:model ${name}`);
   }
   const source = fs.readFileSync(file, "utf8");
   if (/@Entity\s*\(/.test(source)) {
-    throw new CliError(`${rel(file)} is a TypeORM entity; update:model only updates Megh ORM models.`);
+    throw new CliError(`${rel(file)} is a TypeORM entity; sync:model only syncs Megh ORM models.`);
   }
   if (!/@Table\s*\(/.test(source)) {
     throw new CliError(
-      `${rel(file)} declares its columns without decorators (static table/casts), which update:model ` +
+      `${rel(file)} declares its columns without decorators (static table/casts), which sync:model ` +
         `can't edit safely. Regenerate it with: megh make:model ${name} --force (then re-add relations and methods).`,
     );
   }
@@ -170,11 +186,14 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
   const result = syncModelSource(source, table);
   const { added, removed, updated, kept } = result.changes;
   const changed = result.source !== source;
-  const prefix = opts.dryRun ? "Would update" : "Model updated";
+  const prefix = opts.dryRun ? "Would sync" : "Model synced";
   if (!changed) {
     log.info(`${rel(file)} already matches the "${table.name}" table.`);
   } else {
-    if (!opts.dryRun) fs.writeFileSync(file, result.source, "utf8");
+    if (!opts.dryRun) {
+      trackWrite(file);
+      fs.writeFileSync(file, result.source, "utf8");
+    }
     log.success(`${prefix}: ${rel(file)}`);
   }
   for (const c of added) log.info(`  + ${c}`);
@@ -184,7 +203,7 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
     log.warn(`  ${c} has hand-made changes, so it was kept as written; check it against the migration.`);
   }
 
-  const dtoFile = path.join(targetDir(projectRoot, "dto", n.dirs), `${n.fileBase}.dto.ts`);
+  const dtoFile = existingFile(projectRoot, "dto", n, "dto");
   if (opts.dto) {
     const model: ResourceModel = { name: n, file, schema: readModelSchema(result.source, table), typeorm: false };
     if (opts.dryRun) log.info(`  Would rewrite ${rel(dtoFile)}`);
@@ -194,6 +213,11 @@ export function updateModel(name: string, opts: UpdateModelOptions = {}): ModelC
   }
   return result.changes;
 }
+
+/** @deprecated Renamed to {@link syncModel}. */
+export const updateModel = syncModel;
+/** @deprecated Renamed to {@link SyncModelOptions}. */
+export type UpdateModelOptions = SyncModelOptions;
 
 function renderEntityModel(model: string) {
   return renderStub("models/entity-model.stub", { Model: model, table: snakeCase(model) });
@@ -226,7 +250,7 @@ type ResourceModel = {
  */
 function resolveResourceModel(projectRoot: string, model: string, opts: { orm?: boolean; table?: string } = {}): ResourceModel {
   const name = resolveName(model, "Model");
-  const file = path.join(targetDir(projectRoot, "model", name.dirs), `${name.fileBase}.model.ts`);
+  const file = existingFile(projectRoot, "model", name, "model");
   const exists = fs.existsSync(file);
   if (opts.orm && !exists) return { name, file, create: renderEntityModel(name.base), typeorm: true };
 
@@ -352,8 +376,8 @@ export function makeController(name: string, opts: MakeControllerOptions = {}): 
   if (opts.model) {
     const model = resolveResourceModel(projectRoot, opts.model, { orm: opts.orm });
     const m = model.name;
-    const serviceFile = path.join(targetDir(projectRoot, "service", m.dirs), `${m.fileBase}.service.ts`);
-    const dtoFile = path.join(targetDir(projectRoot, "dto", m.dirs), `${m.fileBase}.dto.ts`);
+    const serviceFile = existingFile(projectRoot, "service", m, "service");
+    const dtoFile = existingFile(projectRoot, "dto", m, "dto");
     content = renderResourceController(model, file, n.className, route, serviceFile, dtoFile);
     // Dependencies first, so a failure leaves no controller pointing at missing files.
     if (!model.typeorm) ensureDependency(dtoFile, () => renderDtoFor(model), "DTO", projectRoot);
@@ -389,9 +413,9 @@ export function makeResource(name: string, opts: MakeResourceOptions = {}): stri
   const model = resolveResourceModel(projectRoot, name, { table: opts.table });
   const m = model.name;
   const files = {
-    service: path.join(targetDir(projectRoot, "service", m.dirs), `${m.fileBase}.service.ts`),
-    controller: path.join(targetDir(projectRoot, "controller", m.dirs), `${m.fileBase}.controller.ts`),
-    dto: path.join(targetDir(projectRoot, "dto", m.dirs), `${m.fileBase}.dto.ts`),
+    service: existingFile(projectRoot, "service", m, "service"),
+    controller: existingFile(projectRoot, "controller", m, "controller"),
+    dto: existingFile(projectRoot, "dto", m, "dto"),
   };
   if (!opts.force) {
     const taken = Object.values(files).filter((f) => fs.existsSync(f) && !(model.typeorm && f === files.dto));
@@ -792,7 +816,7 @@ export type MakeFactoryOptions = Pick<MakeBaseOptions, "cwd" | "force">;
 export function makeFactory(name: string, opts: MakeFactoryOptions = {}): string {
   const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
   const n = resolveName(name.replace(/[-_.]?factory$/i, ""), "Model");
-  const modelFile = path.join(targetDir(projectRoot, "model", n.dirs), `${n.fileBase}.model.ts`);
+  const modelFile = existingFile(projectRoot, "model", n, "model");
   if (!fs.existsSync(modelFile)) {
     throw new CliError(
       `There is no ${n.base} model (${relPath(projectRoot, modelFile)}) to build a factory for. ` +

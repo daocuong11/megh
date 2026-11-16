@@ -7,6 +7,65 @@ description: Generating resources, controllers, services, models, middleware and
 
 The `make:*` commands write new files from templates. Models are read from your migrations, and `make:resource` writes a complete REST API for a model. Every `make:*` command takes `-f` / `--force` to overwrite an existing file.
 
+## Folders
+
+A plain name goes in the folder for its type. A name with a folder in front
+is a module: the module folder comes first, then the type folder.
+
+| Command | Writes |
+|---|---|
+| `make:model user` | `src/models/user.model.ts` |
+| `make:model users/user` | `src/users/models/user.model.ts` |
+| `make:controller users/user` | `src/users/controllers/user.controller.ts` |
+| `make:service users/user` | `src/users/services/user.service.ts` |
+| `make:resource users/user` | `src/users/{models,dtos,services,controllers}/user.*.ts` |
+
+`--root <dir>` replaces the type folder: `make:model users/user --root domain`
+writes `src/users/domain/user.model.ts`.
+
+`useControllers({ auto: true })` finds controllers in every `controllers/`
+folder under `src/`, so module controllers are registered too.
+
+::: info Before 0.6.2
+Nested names wrote `src/models/users/user.model.ts`. Files already there keep
+working: `make:resource`, `make:factory` and `sync:model` look there when
+the new location has no file.
+:::
+
+## Reviewing changes
+
+A generator that would change a file that already exists (with `-f`, or
+`sync:model`) shows what it is about to do and asks first:
+
+```txt
+Changes
+  ~ changed  src/blog/models/post.model.ts
+
+src/blog/models/post.model.ts
+      title!: string;
+
+  -   @Column({ nullable: true, type: "text" })
+  -   body!: string | null;
+
+      @Column()
+  Can affect:
+    src/blog/services/post.service.ts imports it
+      line 5 uses .body, which is removed
+
+? Apply these changes to 1 existing file? (y/N)
+```
+
+- **Changes** lists new files (`+ new`) and changed ones (`~ changed`), with a
+  diff of each changed file.
+- **Can affect** lists the files that import a changed file, and the lines
+  that use a property or method the change removes or retypes.
+- Answering no puts everything back, including the new files the command
+  made along the way.
+
+A command that only creates new files doesn't ask. `-y` / `--yes` applies
+without asking; so does running outside a terminal (scripts and CI), which
+still prints the review.
+
 ## Resource
 
 ```sh
@@ -33,7 +92,8 @@ If there is neither a model nor a migration for the table, nothing is
 written; create the migration first (`megh make:migration create_users_table`).
 Use `--table <name>` when the table name isn't the plural snake_case name, and
 `-f` to overwrite existing DTO, service and controller files. Nested names
-work too: `megh m:r admin/user` serves `/admin/users`.
+work too: `megh m:r admin/user` writes to `src/admin/` and serves
+`/admin/users`. See [Folders](#folders).
 
 If the model is a [TypeORM](/advanced/database) entity instead, the service
 uses its repository and no DTOs are generated.
@@ -108,12 +168,24 @@ columns are taken into account:
 // Columns read from the migrations (the table is created in 20260101000000_create_users_table.ts).
 @Table("users")
 export class User extends Model {
-  @PrimaryKey() @AutoIncrement() id?: number;
-  @Column() email!: string;
-  @Column({ nullable: true, type: "string" }) name!: string | null;
-  @Column({ type: "boolean" }) is_admin?: boolean;
-  @CreatedAt() created_at?: Date;
-  @UpdatedAt() updated_at?: Date;
+  @PrimaryKey()
+  @AutoIncrement()
+  id?: number;
+
+  @Column()
+  email!: string;
+
+  @Column({ nullable: true, type: "string" })
+  name!: string | null;
+
+  @Column({ type: "boolean" })
+  is_admin?: boolean;
+
+  @CreatedAt()
+  created_at?: Date;
+
+  @UpdatedAt()
+  updated_at?: Date;
 }
 ```
 
@@ -133,16 +205,21 @@ npx megh make:model Product --template ecommerce/product
 npx megh make:resource Ticket --fields "title,body,status:in(open|closed),user_id:cascade"
 ```
 
-### Updating a model
+### Syncing a model
 
 After a migration alters the table, bring the model up to date without
 regenerating it:
 
 ```sh
-npx megh update:model user
-npx megh u:m user --dry-run   # show the changes, write nothing
-npx megh u:m user --dto       # also rewrite src/dtos/user.dto.ts
+npx megh sync:model user
+npx megh s:m user --dry-run   # show the review, write nothing
+npx megh s:m user --dto       # also rewrite src/dtos/user.dto.ts
+npx megh s:m user --yes       # apply without asking
 ```
+
+It shows the changes and what they affect, and asks before writing (see
+[Reviewing changes](#reviewing-changes)). It was called `update:model` before
+0.6.2; that name (and `u:m`) still works.
 
 For a migration such as:
 
@@ -153,7 +230,7 @@ await schema.table("users", (table) => {
 });
 ```
 
-`update:model` adds `@Column({ nullable: true, type: "string" }) phone!: string | null;` after the
+`sync:model` adds `@Column({ nullable: true, type: "string" }) phone!: string | null;` after the
 model's existing columns, removes the `age` field (with its doc comment), and
 rewrites any field still in the shape `make:model` writes when its type or
 nullability changed. Only column fields are touched: relations, methods,
@@ -194,7 +271,7 @@ npx megh make:mail OrderShipped
 
 Generates a `Mailable` in `src/mail`, with `envelope()`, `content()` and
 `attachments()` to fill in. The `Mail` suffix is added for you, and a name like
-`admin/Invoice` writes to `src/mail/admin/invoice.mail.ts`:
+`admin/Invoice` writes to `src/admin/mail/invoice.mail.ts`:
 
 ```ts [src/mail/order-shipped.mail.ts]
 import { Mailable } from '@meghjs/core';

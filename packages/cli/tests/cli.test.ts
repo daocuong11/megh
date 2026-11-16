@@ -3,11 +3,19 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { runCli } from "../src/program";
-import { createApplication, initGit } from "../src/commands/new";
+import { createApplication, FEATURES, initGit } from "../src/commands/new";
 import { spawnSync } from "child_process";
 import { runChecks } from "../src/commands/doctor";
 import { joinRoute, scanRoutes } from "../src/commands/route-list";
-import { makeController, makeDto, makeMail, makeModel, makeService } from "../src/generators/make";
+import {
+  makeConfig,
+  makeController,
+  makeDto,
+  makeMail,
+  makeMiddleware,
+  makeModel,
+  makeService,
+} from "../src/generators/make";
 import { entryCandidates, projectLayout, resolveEntry } from "../src/utils/entry";
 import { kebabCase, pascalCase, resolveName } from "../src/utils/names";
 import { parseJsonc, readTsConfig } from "../src/utils/tsconfig";
@@ -145,9 +153,41 @@ describe("generators", () => {
     expect(() => makeMail("OrderShipped", { cwd: tmp })).toThrow(/already exists/);
   });
 
+  it("puts a module folder before the type folder", () => {
+    makeModel("user", { cwd: tmp });
+    makeModel("users/user", { cwd: tmp });
+    makeController("users/user", { cwd: tmp });
+    makeService("users/user", { cwd: tmp });
+    makeDto("users/user", { cwd: tmp });
+    makeMiddleware("users/auth", { cwd: tmp });
+    makeConfig("users/settings", { cwd: tmp });
+    makeMail("users/welcome", { cwd: tmp });
+    for (const file of [
+      "src/models/user.model.ts",
+      "src/users/models/user.model.ts",
+      "src/users/controllers/user.controller.ts",
+      "src/users/services/user.service.ts",
+      "src/users/dtos/user.dto.ts",
+      "src/users/middlewares/auth.middleware.ts",
+      "src/users/config/settings.config.ts",
+      "src/users/mail/welcome.mail.ts",
+    ]) {
+      expect(exists(...file.split("/")), file).toBe(true);
+    }
+    for (const old of ["controllers", "services", "dtos", "middlewares", "mail"]) {
+      expect(exists("src", old, "users"), `src/${old}/users`).toBe(false);
+    }
+    expect(exists("src", "models", "users")).toBe(false);
+  });
+
+  it("puts --root inside the module folder", () => {
+    makeModel("users/user", { cwd: tmp, root: "domain" });
+    expect(exists("src", "users", "domain", "user.model.ts")).toBe(true);
+  });
+
   it("strips a Mail suffix and supports folders", () => {
     makeMail("admin/InvoiceMail", { cwd: tmp });
-    expect(read("src", "mail", "admin", "invoice.mail.ts")).toContain("export class InvoiceMail extends Mailable");
+    expect(read("src", "admin", "mail", "invoice.mail.ts")).toContain("export class InvoiceMail extends Mailable");
     makeMail("Welcome", { cwd: tmp, root: "modules/users" });
     expect(exists("src", "modules", "users", "welcome.mail.ts")).toBe(true);
   });
@@ -180,7 +220,7 @@ describe("generators", () => {
 }`,
     );
     makeController("admin/product", { cwd: tmp, model: "product" });
-    const ctrl = read("src", "controllers", "admin", "product.controller.ts");
+    const ctrl = read("src", "admin", "controllers", "product.controller.ts");
     expect(ctrl).toContain("class ProductController");
     expect(ctrl).toContain("@ApiController('/admin/products')");
     expect(ctrl).toContain("from '../../services/product.service'");
@@ -254,12 +294,19 @@ describe("new", () => {
     expect(read("my_api", "megh-env.d.ts")).not.toContain("reference");
   });
 
-  it("uses Scalar in place of Swagger UI with the scalar feature", async () => {
-    await createApplication("scalar_api", { cwd: tmp, yes: true, skipInstall: true, features: ["scalar"] });
-    const pkg = JSON.parse(read("scalar_api", "package.json"));
-    expect(pkg.dependencies["@fastify/swagger"]).toBeDefined();
-    expect(pkg.dependencies["@scalar/fastify-api-reference"]).toBeDefined();
-    expect(pkg.dependencies["@fastify/swagger-ui"]).toBeUndefined();
+  it("offers only openapi, cors and orm, and says how to add the others", async () => {
+    expect(FEATURES).toEqual(["openapi", "cors", "orm"]);
+    for (const [feature, hint] of [
+      ["mail", /app\.useMail\(\)/],
+      ["scalar", /provider: 'scalar'/],
+      ["typeorm", /useTypeORM/],
+      ["knex", /useKnex/],
+    ] as const) {
+      await expect(
+        createApplication(`${feature}_api`, { cwd: tmp, yes: true, skipInstall: true, features: [feature] }),
+      ).rejects.toThrow(hint);
+      expect(exists(`${feature}_api`, "package.json")).toBe(false);
+    }
   });
 
   it("leaves the OpenAPI packages out of a minimal project", async () => {
@@ -290,35 +337,12 @@ describe("new", () => {
     expect(fs.existsSync(path.join(inner, ".git"))).toBe(false);
   });
 
-  it("sets up mail with the mail feature", async () => {
-    await createApplication("shop_api", { cwd: tmp, yes: true, skipInstall: true, features: ["mail"] });
-    const pkg = JSON.parse(read("shop_api", "package.json"));
-    expect(pkg.dependencies.nodemailer).toBeDefined();
-    expect(read("shop_api", "src", "app.ts")).toContain("app.useMail();");
-    expect(read("shop_api", "src", "mail", "welcome.mail.ts")).toContain("export class WelcomeMail extends Mailable");
-    const env = read("shop_api", ".env");
-    expect(env).toContain("MEGH_MAIL_FROM_ADDRESS=hello@example.com");
-    expect(env).toContain('MEGH_MAIL_FROM_NAME="Shop Api"');
-    // No mailer is set: log in development, and a clear error in production.
-    expect(env).not.toMatch(/^MEGH_MAIL_MAILER=/m);
-    expect(env).toContain("# MEGH_MAIL_HOST=127.0.0.1");
-  });
-
-  it("leaves mail out unless it is chosen", async () => {
+  it("leaves mail out", async () => {
     await createApplication("plain", { cwd: tmp, yes: true, skipInstall: true });
     expect(JSON.parse(read("plain", "package.json")).dependencies.nodemailer).toBeUndefined();
     expect(read("plain", "src", "app.ts")).not.toContain("useMail");
     expect(read("plain", ".env")).not.toContain("MEGH_MAIL");
     expect(exists("plain", "src", "mail")).toBe(false);
-  });
-
-  it("adds @meghjs/data and its types for the database features", async () => {
-    await createApplication("db_api", { cwd: tmp, yes: true, skipInstall: true, features: ["typeorm"] });
-    const pkg = JSON.parse(read("db_api", "package.json"));
-    expect(pkg.dependencies["@meghjs/data"]).toBe(pkg.dependencies["@meghjs/cli"]);
-    expect(pkg.dependencies.typeorm).toBeDefined();
-    expect(read("db_api", "megh-env.d.ts")).toContain('/// <reference types="@meghjs/data" />');
-    expect(read("db_api", "tsconfig.json")).toContain('"megh-env.d.ts"');
   });
 
   it("sets up MeghORM with the orm feature, on SQLite by default", async () => {

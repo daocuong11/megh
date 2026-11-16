@@ -23,7 +23,7 @@ import {
   makeResource,
   makeSeeder,
   makeFactory,
-  updateModel,
+  syncModel,
   makeService,
 } from "./generators/make";
 import { listTemplates, makeFromTemplate, scaffoldDomain } from "./generators/scaffold";
@@ -32,6 +32,8 @@ import { parseFieldList } from "./templates/fields";
 import { banner } from "./utils/banner";
 import { log } from "./utils/log";
 import { cliVersion } from "./utils/stubs";
+import { withReview } from "./utils/changes";
+import { findProjectRoot } from "./utils/project";
 
 export type RunOptions = {
   /** Working directory for the command. Defaults to `process.cwd()`. */
@@ -39,6 +41,12 @@ export type RunOptions = {
   /** Override where commander writes help and errors (used by tests). */
   writeOut?: (s: string) => void;
   writeErr?: (s: string) => void;
+  /**
+   * Answer the "apply these changes?" question a command asks before changing
+   * existing files (used by tests). Without it, the user is asked when running
+   * in a terminal; otherwise the changes are kept.
+   */
+  confirm?: (message: string) => Promise<boolean>;
 };
 
 /**
@@ -93,6 +101,19 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     if (run.writeOut || run.writeErr) cmd.configureOutput(program.configureOutput());
     return cmd;
   };
+
+  /**
+   * Run a command that writes files. If it changes files that already exist,
+   * show the diff and what it can affect, and ask before keeping it.
+   */
+  const review = (o: { yes?: boolean; dryRun?: boolean }, command: () => unknown, quiet = true) =>
+    withReview(command, {
+      projectRoot: findProjectRoot(cwd()) ?? cwd(),
+      yes: o.yes,
+      dryRun: o.dryRun,
+      confirm: run.confirm,
+      quiet,
+    });
 
   // ── Project ─────────────────────────────────────────────────────────────
   sub("new", "Create a new Megh application")
@@ -215,16 +236,18 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--create <table>", "Generate a create-table migration for <table>")
     .option("--table <table>", "Generate an alter-table migration for <table>")
     .option("-f, --force", "Overwrite the file if it exists")
-    .action((name: string, o) => {
-      makeMigration(name, { cwd: cwd(), create: o.create, table: o.table, force: o.force });
+    .option("-y, --yes", "Apply changes to existing files without asking")
+    .action(async (name: string, o) => {
+      await review(o, () => makeMigration(name, { cwd: cwd(), create: o.create, table: o.table, force: o.force }));
     });
 
   sub("make:seeder", "Create a seeder in src/database/seeders/<name>.seeder.ts")
     .alias("m:sd")
     .argument("<name>", "e.g. users, or database for the entry seeder db:seed runs")
     .option("-f, --force", "Overwrite the file if it exists")
-    .action((name: string, o) => {
-      makeSeeder(name, { cwd: cwd(), force: o.force });
+    .option("-y, --yes", "Apply changes to existing files without asking")
+    .action(async (name: string, o) => {
+      await review(o, () => makeSeeder(name, { cwd: cwd(), force: o.force }));
     });
 
   sub("make:factory", "Create a model factory in src/database/factories/<name>.factory.ts")
@@ -237,8 +260,9 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
         "for each column, picked from its name and type. A foreign key such as role_id uses\n" +
         "RoleFactory when src/database/factories/role.factory.ts exists. Needs @faker-js/faker.",
     )
-    .action((name: string, o) => {
-      makeFactory(name, { cwd: cwd(), force: o.force });
+    .option("-y, --yes", "Apply changes to existing files without asking")
+    .action(async (name: string, o) => {
+      await review(o, () => makeFactory(name, { cwd: cwd(), force: o.force }));
     });
 
   // ── Generators ──────────────────────────────────────────────────────────
@@ -246,7 +270,8 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     sub(name, description)
       .aliases(aliases)
       .argument("<name>", "Name, optionally nested (e.g. admin/User)")
-      .option("-f, --force", "Overwrite the file if it exists");
+      .option("-f, --force", "Overwrite the file if it exists (shows the changes and asks first)")
+      .option("-y, --yes", "Don't prompt: apply changes to existing files without asking");
 
   make("make:model", ["m:m"], "Create a model in src/models/<name>.model.ts, with columns read from its migrations")
     .option("-t, --table <table>", "Table name (default: plural snake_case name, e.g. blog_posts)")
@@ -256,23 +281,23 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--fields <list>", 'Columns to add or replace, e.g. "title,price:money,status:in(draft|live)"')
     .option("--factory", "With --template/--fields: also write a factory")
     .option("--no-deps", "With --template/--fields: don't create the tables foreign keys point to")
-    .option("-y, --yes", "Don't prompt")
     .addHelpText("after", TEMPLATE_HELP)
     .action(async (name: string, o) => {
       if (o.template !== undefined || o.fields !== undefined) {
         if (o.orm) throw new CliError("--template and --fields build Megh ORM models; leave out --orm.");
-        await makeFromTemplate(name, { cwd: cwd(), mode: "model", ...templateOptions(o) });
+        await review(o, () => makeFromTemplate(name, { cwd: cwd(), mode: "model", ...templateOptions(o) }), false);
         return;
       }
-      makeModel(name, { cwd: cwd(), force: o.force, table: o.table, orm: o.orm, root: o.root });
+      await review(o, () => makeModel(name, { cwd: cwd(), force: o.force, table: o.table, orm: o.orm, root: o.root }));
     });
 
-  sub("update:model", "Sync a model's columns with its migrations, keeping relations and methods")
-    .alias("u:m")
+  sub("sync:model", "Sync a model's columns with its migrations, keeping relations and methods")
+    .aliases(["s:m", "update:model", "u:m"])
     .argument("<name>", "Model name, optionally nested (e.g. admin/User)")
     .option("-t, --table <table>", "Table to read (default: the model's @Table, else the plural snake_case name)")
     .option("--dto", "Also rewrite src/dtos/<name>.dto.ts from the updated columns")
     .option("--dry-run", "Show what would change without writing")
+    .option("-y, --yes", "Apply the changes without asking")
     .option("--root <dir>", "Folder under src/ the model is in (also -rt)")
     .addHelpText(
       "after",
@@ -281,8 +306,8 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
         "wrote them get the current type and nullability. Fields you customized (a name: mapping,\n" +
         "a custom cast, extra options) are kept and reported.",
     )
-    .action((name: string, o) => {
-      updateModel(name, { cwd: cwd(), table: o.table, dto: o.dto, dryRun: o.dryRun, root: o.root });
+    .action(async (name: string, o) => {
+      await review(o, () => syncModel(name, { cwd: cwd(), table: o.table, dto: o.dto, root: o.root }));
     });
 
   make(
@@ -303,13 +328,12 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--fields <list>", 'Columns to add or replace, e.g. "title,price:money,status:in(draft|live)"')
     .option("--factory", "With --template/--fields: also write a factory")
     .option("--no-deps", "With --template/--fields: don't create the tables foreign keys point to")
-    .option("-y, --yes", "Don't prompt")
     .action(async (name: string, o) => {
       if (o.template !== undefined || o.fields !== undefined) {
-        await makeFromTemplate(name, { cwd: cwd(), mode: "resource", ...templateOptions(o) });
+        await review(o, () => makeFromTemplate(name, { cwd: cwd(), mode: "resource", ...templateOptions(o) }), false);
         return;
       }
-      makeResource(name, { cwd: cwd(), force: o.force, table: o.table });
+      await review(o, () => makeResource(name, { cwd: cwd(), force: o.force, table: o.table }));
     });
 
   make("make:controller", ["m:c"], "Create a controller in src/controllers/<name>.controller.ts")
@@ -318,8 +342,8 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--orm", "With -m, back the service with a TypeORM repository and entity")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .option("--base-path", "Use @ApiController without a path prefix")
-    .action((name: string, o) => {
-      makeController(name, { cwd: cwd(), ...o });
+    .action(async (name: string, o) => {
+      await review(o, () => makeController(name, { cwd: cwd(), ...o }));
     });
 
   make("make:service", ["m:s"], "Create a service in src/services/<name>.service.ts")
@@ -327,26 +351,26 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("-m, --model <model>", "Model for a resource service; creates the model from its migration if missing")
     .option("--orm", "Back the resource service with a TypeORM repository and entity")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
-    .action((name: string, o) => {
-      makeService(name, { cwd: cwd(), ...o });
+    .action(async (name: string, o) => {
+      await review(o, () => makeService(name, { cwd: cwd(), ...o }));
     });
 
   make("make:config", ["m:cnf", "m:cfg"], "Create an @AppConfig class in src/config/<name>.config.ts")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
-    .action((name: string, o) => {
-      makeConfig(name, { cwd: cwd(), ...o });
+    .action(async (name: string, o) => {
+      await review(o, () => makeConfig(name, { cwd: cwd(), ...o }));
     });
 
   make("make:middleware", ["m:mlwr", "m:mdlr"], "Create a middleware in src/middlewares/<name>.middleware.ts")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
-    .action((name: string, o) => {
-      makeMiddleware(name, { cwd: cwd(), ...o });
+    .action(async (name: string, o) => {
+      await review(o, () => makeMiddleware(name, { cwd: cwd(), ...o }));
     });
 
   make("make:mail", ["m:mail"], "Create a Mailable in src/mail/<name>.mail.ts")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
-    .action((name: string, o) => {
-      makeMail(name, { cwd: cwd(), ...o });
+    .action(async (name: string, o) => {
+      await review(o, () => makeMail(name, { cwd: cwd(), ...o }));
     });
 
   make("make:event", ["m:ev"], "Create an event in src/events/<name>.event.ts")
@@ -386,8 +410,8 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
 
   make("make:dto", ["m:dto"], "Create a class-validator DTO in src/dtos/<name>.dto.ts")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
-    .action((name: string, o) => {
-      makeDto(name, { cwd: cwd(), ...o });
+    .action(async (name: string, o) => {
+      await review(o, () => makeDto(name, { cwd: cwd(), ...o }));
     });
 
   // ── Templates ───────────────────────────────────────────────────────────

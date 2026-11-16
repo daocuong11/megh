@@ -19,7 +19,7 @@ npm i -g @meghjs/cli
 | `serve` | | Start the dev server with watch + rebuild |
 | `build` | | Compile using `tsconfig.build.json` |
 | `make:model` | `m:m` | Create a MeghORM model (columns from its migrations), or a TypeORM entity with `--orm` |
-| `update:model` | `u:m` | Sync an existing model's columns with its migrations |
+| `sync:model` | `s:m` | Sync an existing model's columns with its migrations (was `update:model`) |
 | `make:resource` | `m:r` | Create a REST resource for a model: DTOs, CRUD service and controller |
 | `make:controller` | `m:c` | Create a controller |
 | `make:service` | `m:s` | Create a service |
@@ -64,8 +64,9 @@ npx @meghjs/cli new myapi
 ```
 
 You are prompted for a package manager and optional features: OpenAPI docs,
-CORS, MeghORM, TypeORM, Knex, Scalar UI and [Mail](/advanced/mail). With
-MeghORM you also pick the database. Non-interactively:
+CORS and MeghORM. With MeghORM you also pick the database. Add
+[Mail](/advanced/mail#setting-it-up), Scalar UI or the
+[`@meghjs/data`](/advanced/database) plugin afterwards. Non-interactively:
 
 ```sh
 npx @meghjs/cli new myapi --yes --database postgres   # also: mysql, sqlite, mssql

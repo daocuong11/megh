@@ -1,11 +1,11 @@
 import { snakeCase } from "../utils/names";
 import type { MigrationTable } from "./migration-schema";
-import { renderField } from "./orm-model";
+import { fieldLines, renderField } from "./orm-model";
 import { declaredProperties, type Declared } from "./resource";
 
 /**
  * Brings a decorated Megh ORM model's column fields in line with its table as
- * the migrations leave it, for `update:model`. Only the column declarations
+ * the migrations leave it, for `sync:model`. Only the column declarations
  * change: new columns are added (in migration order), dropped ones removed,
  * and fields still in the shape `make:model` writes are rewritten with the
  * current type and nullability. Fields with hand-made changes (a `name:`
@@ -83,10 +83,14 @@ export function syncModelSource(source: string, table: MigrationTable): { source
 
   for (const column of table.columns) {
     const { decorators, field } = renderField(column);
-    const fresh = `${decorators.join(" ")} ${field}`;
+    const freshLines = fieldLines(decorators, field);
+    const fresh = freshLines.join(" ");
+    const block = (pad: string) => freshLines.map((l) => pad + l).join(eol);
     const existing = find(column.name);
     if (!existing) {
-      insertAfter.set(anchor, [...(insertAfter.get(anchor) ?? []), indent + fresh]);
+      // A blank line separates it from the field above (or from the class body below).
+      const lines = anchor === classLine ? [block(indent), ""] : ["", block(indent)];
+      insertAfter.set(anchor, [...(insertAfter.get(anchor) ?? []), ...lines]);
       changes.added.push(column.name);
       continue;
     }
@@ -98,14 +102,19 @@ export function syncModelSource(source: string, table: MigrationTable): { source
       changes.kept.push(column.name);
       continue;
     }
-    replace.set(existing.startLine, lines[existing.startLine].match(/^\s*/)![0] + fresh);
+    replace.set(existing.startLine, block(lines[existing.startLine].match(/^\s*/)![0]));
     for (let i = existing.startLine + 1; i <= existing.endLine; i++) drop.add(i);
     changes.updated.push(column.name);
   }
 
   for (const field of fields) {
     if (used.has(field)) continue;
-    for (let i = commentAbove(lines, field.startLine); i <= field.endLine; i++) drop.add(i);
+    const start = commentAbove(lines, field.startLine);
+    for (let i = start; i <= field.endLine; i++) drop.add(i);
+    // Drop the blank line that separated it, so no double blank line is left.
+    const blank = (i: number) => i >= 0 && i < lines.length && lines[i].trim() === "" && !drop.has(i);
+    if (blank(start - 1)) drop.add(start - 1);
+    else if (blank(field.endLine + 1)) drop.add(field.endLine + 1);
     changes.removed.push(columnOf(field));
   }
 

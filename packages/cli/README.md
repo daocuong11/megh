@@ -9,7 +9,7 @@ npx @meghjs/cli new my_api
 ```
 
 You are prompted for a package manager and for optional features (OpenAPI,
-CORS, MeghORM, TypeORM, Knex, Scalar UI, Mail). The generated project uses `@meghjs/core`'s
+CORS, MeghORM). The generated project uses `@meghjs/core`'s
 `Megh.createApplication()` and is ready to run:
 
 ```sh
@@ -29,7 +29,7 @@ npm run start:dev
 | `route:list` | `routes` | `--json`, `--static` | List the app's routes |
 | `make:model` | `m:m` | `-f`, `--orm`, `--root <dir>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a model / TypeORM entity; with `--template` / `--fields`, also its migration |
 | `make:resource` | `m:r` | `-f`, `-t <table>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a model's DTOs, CRUD service and controller |
-| `update:model` | `u:m` | `-t <table>`, `--dto`, `--dry-run`, `--root <dir>` | Sync a model's columns with its migrations, keeping relations and methods |
+| `sync:model` | `s:m`, `update:model` | `-t <table>`, `--dto`, `--dry-run`, `-y`, `--root <dir>` | Sync a model's columns with its migrations, keeping relations and methods |
 | `make:controller` | `m:c` | `-f`, `-r`, `-m <model>`, `--orm`, `--root <dir>`, `--base-path` | Create a controller |
 | `make:service` | `m:s` | `-f`, `-r`, `-m <model>`, `--orm`, `--root <dir>` | Create a service |
 | `make:config` | `m:cnf` | `-f`, `--root <dir>` | Create an `@AppConfig` class |
@@ -49,9 +49,11 @@ npm run start:dev
 | `scaffold:rbac` | `sc:rbac` | `--roles <single\|multiple>`, `--permissions`, `-f`, `-y` | Add roles and permissions to an app's users |
 | `template:list [domain]` | `templates` | `--json` | List the model templates |
 
-`-f` / `--force` overwrites an existing file. `-r` / `--resource` generates a
+`-f` / `--force` overwrites an existing file, after showing a diff, the files
+that import it, and asking (`-y` skips the question). `-r` / `--resource` generates a
 full REST skeleton. `--root <dir>` (also `-rt`) writes under `src/<dir>`
-instead of the default folder. Names may be nested, e.g. `admin/User`.
+instead of the default folder. Names may be nested, e.g. `admin/User`: the module folder comes first, so
+`make:model admin/User` writes `src/admin/models/user.model.ts`.
 Run `megh <command> --help` for details.
 
 Generated controllers must be registered in your app with
@@ -114,8 +116,8 @@ npx megh make:mail OrderShipped
 Generates `src/mail/order-shipped.mail.ts`, an `OrderShippedMail` class
 extending `Mailable` with `envelope()`, `content()` and `attachments()`. Send it
 with the injected `Mailer`: `mailer.to(user.email).send(new OrderShippedMail())`.
-Mail must be turned on in `src/app.ts` with `app.useMail()`; projects created
-with the `mail` feature already have it.
+Mail must be turned on in `src/app.ts` with `app.useMail()`, and SMTP needs
+`npm i nodemailer`.
 
 ### Events, queues and scheduled tasks
 
