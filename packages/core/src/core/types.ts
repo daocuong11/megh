@@ -4,6 +4,7 @@
  * @email xtrinsic96@gmail.com
  * @url https://github.com/xtareq
  */
+import type { RouteRateLimitOptions } from "../security/rate-limit";
 import { FastifyRequest, FastifyReply } from "fastify";
 import { MultipartFile } from "../http/multipart";
 import { OpenApiUiOptions } from "../openapi/openapi";
@@ -113,6 +114,8 @@ export type FuncRoute = {
   schema: any;
   /** Set by `.authorized()`: the `@Authorized` options for this route. */
   authorize?: { name?: string; [key: string]: unknown };
+  /** Set by `.rateLimit()`: this route's own limit, or `false` for none. */
+  rateLimit?: RouteRateLimitOptions | false;
 };
 
 export type StaticFileOptions = {

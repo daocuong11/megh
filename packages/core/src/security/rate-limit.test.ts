@@ -1,0 +1,280 @@
+import "reflect-metadata";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MeghApplication } from "../core/application";
+import { ApiController } from "../http/controller";
+import { Get, Post } from "../http/route-methods";
+import {
+  MemoryRateLimitStore,
+  RateLimit,
+  RateLimitStore,
+  RedisRateLimitStore,
+  parseWindow,
+} from "./rate-limit";
+
+@ApiController("/rl")
+class LimitedController {
+  @Get("/")
+  list() {
+    return { ok: true };
+  }
+
+  @Post("/login")
+  @RateLimit({ max: 2 })
+  login() {
+    return { ok: true };
+  }
+
+  @Get("/free")
+  @RateLimit(false)
+  free() {
+    return { ok: true };
+  }
+}
+
+@ApiController("/plain")
+class PlainController {
+  @Get("/")
+  get() {
+    return { ok: true };
+  }
+}
+
+const apps: MeghApplication[] = [];
+async function boot(
+  setup: (app: MeghApplication) => void,
+  controllers: any[] = [LimitedController],
+) {
+  const app = MeghApplication.getInternalApp({ autoloadPlugins: false });
+  app.useErrorLogger(false);
+  app.useControllers(controllers);
+  setup(app);
+  apps.push(app);
+  await app.run(0);
+  return app;
+}
+
+const hit = (
+  app: MeghApplication,
+  url = "/rl",
+  method: "GET" | "POST" = "GET",
+  ip?: string,
+) => app.app.inject({ url, method, ...(ip && { remoteAddress: ip }) });
+
+beforeEach(() => {
+  vi.spyOn(console, "log").mockImplementation(() => {});
+});
+afterEach(async () => {
+  await Promise.all(apps.splice(0).map((a) => a.close()));
+  vi.restoreAllMocks();
+});
+
+describe("parseWindow", () => {
+  it("reads milliseconds and durations", () => {
+    expect(parseWindow(500)).toBe(500);
+    expect(parseWindow("250ms")).toBe(250);
+    expect(parseWindow("30s")).toBe(30_000);
+    expect(parseWindow("15m")).toBe(900_000);
+    expect(parseWindow("1 minute")).toBe(60_000);
+    expect(parseWindow("2 hours")).toBe(7_200_000);
+    expect(parseWindow("1d")).toBe(86_400_000);
+  });
+
+  it("rejects nonsense", () => {
+    for (const bad of ["", "soon", "5 weeks", 0, -1, NaN]) {
+      expect(() => parseWindow(bad as any), String(bad)).toThrow(
+        /Invalid rate limit window/,
+      );
+    }
+  });
+});
+
+describe("useRateLimit", () => {
+  it("answers 429 in Megh's error shape once a client is over the limit", async () => {
+    const app = await boot((a) => a.useRateLimit({ max: 2, window: "1m" }));
+    const first = await hit(app);
+    expect(first.statusCode).toBe(200);
+    expect(first.headers["ratelimit-limit"]).toBe("2");
+    expect(first.headers["ratelimit-remaining"]).toBe("1");
+    expect(Number(first.headers["ratelimit-reset"])).toBeGreaterThan(0);
+
+    expect((await hit(app)).headers["ratelimit-remaining"]).toBe("0");
+
+    const blocked = await hit(app);
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json()).toMatchObject({
+      code: 429,
+      status: "Error",
+      message: "Too many requests, please try again later.",
+    });
+    expect(Number(blocked.headers["retry-after"])).toBeGreaterThan(0);
+  });
+
+  it("counts each client separately", async () => {
+    const app = await boot((a) => a.useRateLimit({ max: 1 }));
+    expect((await hit(app, "/rl", "GET", "10.0.0.1")).statusCode).toBe(200);
+    expect((await hit(app, "/rl", "GET", "10.0.0.1")).statusCode).toBe(429);
+    expect((await hit(app, "/rl", "GET", "10.0.0.2")).statusCode).toBe(200);
+  });
+
+  it("starts over when the window ends", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      const app = await boot((a) => a.useRateLimit({ max: 1, window: "1s" }));
+      expect((await hit(app)).statusCode).toBe(200);
+      expect((await hit(app)).statusCode).toBe(429);
+      vi.setSystemTime(Date.now() + 1001);
+      expect((await hit(app)).statusCode).toBe(200);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a route's own limit and separate counter", async () => {
+    const app = await boot((a) => a.useRateLimit({ max: 100 }));
+    expect(
+      (await hit(app, "/rl/login", "POST")).headers["ratelimit-limit"],
+    ).toBe("2");
+    await hit(app, "/rl/login", "POST");
+    expect((await hit(app, "/rl/login", "POST")).statusCode).toBe(429);
+    // The app-wide counter is untouched by the login route.
+    expect((await hit(app)).headers["ratelimit-remaining"]).toBe("99");
+  });
+
+  it("leaves @RateLimit(false) routes unlimited", async () => {
+    const app = await boot((a) => a.useRateLimit({ max: 1 }));
+    for (let i = 0; i < 3; i++) {
+      const res = await hit(app, "/rl/free");
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["ratelimit-limit"]).toBeUndefined();
+    }
+  });
+
+  it("does not limit health probes", async () => {
+    const app = await boot((a) => a.useHealth().useRateLimit({ max: 1 }));
+    for (let i = 0; i < 3; i++) {
+      expect((await hit(app, "/health")).statusCode).toBe(200);
+    }
+  });
+
+  it("limits unknown routes too, so scanning counts", async () => {
+    const app = await boot((a) => a.useRateLimit({ max: 1 }));
+    expect((await hit(app, "/nope")).statusCode).toBe(404);
+    expect((await hit(app, "/nope")).statusCode).toBe(429);
+  });
+
+  it("supports key, skip, message and headers: false", async () => {
+    const app = await boot((a) =>
+      a.useRateLimit({
+        max: 1,
+        key: (req) => String(req.headers["x-api-key"] ?? "anon"),
+        skip: (req) => req.headers["x-internal"] === "1",
+        message: "Slow down",
+        headers: false,
+      }),
+    );
+    const as = (key: string, internal = false) =>
+      app.app.inject({
+        url: "/rl",
+        headers: { "x-api-key": key, ...(internal && { "x-internal": "1" }) },
+      });
+    const ok = await as("a");
+    expect(ok.headers["ratelimit-limit"]).toBeUndefined();
+    const blocked = await as("a");
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.json().message).toBe("Slow down");
+    expect((await as("b")).statusCode).toBe(200);
+    expect((await as("a", true)).statusCode).toBe(200);
+  });
+
+  it("answers 500 when the store fails, or lets requests through with failOpen", async () => {
+    const broken: RateLimitStore = {
+      hit: () => {
+        throw new Error("redis down");
+      },
+    };
+    const strict = await boot((a) => a.useRateLimit({ store: broken }));
+    expect((await hit(strict)).statusCode).toBe(500);
+    await strict.close();
+
+    const open = await boot((a) =>
+      a.useRateLimit({ store: broken, failOpen: true }),
+    );
+    expect((await hit(open)).statusCode).toBe(200);
+  });
+
+  it("limits only decorated routes with global: false", async () => {
+    const app = await boot((a) => a.useRateLimit({ max: 1, global: false }));
+    expect((await hit(app)).statusCode).toBe(200);
+    expect((await hit(app)).statusCode).toBe(200);
+    await hit(app, "/rl/login", "POST");
+    await hit(app, "/rl/login", "POST");
+    expect((await hit(app, "/rl/login", "POST")).statusCode).toBe(429);
+  });
+
+  it("applies @RateLimit routes without useRateLimit()", async () => {
+    const app = await boot(() => {});
+    expect((await hit(app)).headers["ratelimit-limit"]).toBeUndefined();
+    await hit(app, "/rl/login", "POST");
+    await hit(app, "/rl/login", "POST");
+    expect((await hit(app, "/rl/login", "POST")).statusCode).toBe(429);
+  });
+
+  it("adds no hook when nothing is limited", async () => {
+    const app = await boot(() => {}, [PlainController]);
+    expect(
+      (await hit(app, "/plain")).headers["ratelimit-limit"],
+    ).toBeUndefined();
+  });
+
+  it("limits inline routes with .rateLimit()", async () => {
+    const app = await boot((a) => {
+      a.mapGet("/inline", () => ({ ok: true })).rateLimit({ max: 1 });
+    }, []);
+    expect((await hit(app, "/inline")).statusCode).toBe(200);
+    expect((await hit(app, "/inline")).statusCode).toBe(429);
+  });
+
+  it("rejects bad limits when they are declared", () => {
+    expect(() => RateLimit({ max: 0 })).toThrow(/max/);
+    expect(() => RateLimit({ window: "soon" })).toThrow(/window/);
+    const app = MeghApplication.getInternalApp({ autoloadPlugins: false });
+    expect(() => app.mapGet("/x", () => 1).rateLimit({ max: 1.5 })).toThrow(
+      /max/,
+    );
+  });
+
+  it("closes the store it created on shutdown", async () => {
+    const close = vi.spyOn(MemoryRateLimitStore.prototype, "close");
+    const app = await boot((a) => a.useRateLimit());
+    await hit(app);
+    await app.close();
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RedisRateLimitStore", () => {
+  it("counts with one script call per hit and resets with DEL", async () => {
+    const counts = new Map<string, number>();
+    const redis = {
+      eval: vi.fn(
+        async (_script: string, _n: number, key: string, windowMs: number) => {
+          counts.set(key, (counts.get(key) ?? 0) + 1);
+          return [counts.get(key), windowMs - 10];
+        },
+      ),
+      del: vi.fn(async (key: string) => counts.delete(key)),
+    };
+    const store = new RedisRateLimitStore(redis, { prefix: "t:" });
+    expect((await store.hit("ip", 1000)).count).toBe(1);
+    const second = await store.hit("ip", 1000);
+    expect(second.count).toBe(2);
+    expect(second.resetAt).toBeGreaterThan(Date.now());
+    expect(redis.eval.mock.calls[0][2]).toBe("t:ip");
+    await store.reset("ip");
+    expect(redis.del).toHaveBeenCalledWith("t:ip");
+  });
+
+  it("needs a client", () => {
+    expect(() => new RedisRateLimitStore(undefined as any)).toThrow(/ioredis/);
+  });
+});

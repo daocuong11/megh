@@ -18,6 +18,8 @@ import type { RedisOptions } from "ioredis";
 import type { PluginOptions } from "../plugins/registry";
 import type { RequestIdOptions } from "../observability/request-context";
 import type { HealthCheck, HealthOptions } from "../observability/health";
+import type { SecurityHeadersOptions } from "../security/headers";
+import type { RateLimitOptions } from "../security/rate-limit";
 import type {
   ErrorHandlerFunction,
   ErrorLogger,
@@ -53,6 +55,10 @@ export type GlobalOptions = {
   authorization?: any;
   multipart?: any;
   staticFiles?: any;
+  /** `true` or options for `useSecurityHeaders()`. */
+  securityHeaders?: boolean | SecurityHeadersOptions;
+  /** `true` or options for `useRateLimit()`. */
+  rateLimit?: boolean | RateLimitOptions;
 };
 
 export type MeghApplicationOptions = PluginOptions & {
@@ -111,6 +117,10 @@ export interface IMeghApplication {
   // all use
   useCors: (options: CorsOptions) => this;
   useCache: (options?: CacheOptions) => this;
+  /** Send security headers (CSP, HSTS, nosniff, ...) on every response. */
+  useSecurityHeaders: (options?: SecurityHeadersOptions) => this;
+  /** Limit requests per client per window, answering 429 over the limit. */
+  useRateLimit: (options?: RateLimitOptions) => this;
   useMultipart: (options?: any) => this;
   useOpenApi: (
     options?: OpenApiUiOptions | Constructor<MeghConfig<OpenApiUiOptions>>,

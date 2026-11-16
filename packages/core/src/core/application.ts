@@ -49,6 +49,15 @@ import {
 } from "../observability/health";
 import { GetConfig, MeghConfig } from "../config/config";
 import { MeghAuthentication } from "../security/authentication";
+import {
+  SecurityHeadersOptions,
+  installSecurityHeaders,
+} from "../security/headers";
+import {
+  RateLimitOptions,
+  RateLimitStore,
+  installRateLimit,
+} from "../security/rate-limit";
 import { registerPlugins } from "../plugins/registry";
 import { internalLogger } from "../observability/internal-logger";
 import { resolveSourceDir } from "../common/utils/path-utils";
@@ -169,6 +178,10 @@ export class MeghApplication implements IMeghApplication {
   private pluginNames: string[] = [];
   private usesCache = false;
   private usesMail = false;
+  private usesSecurityHeaders = false;
+  private rateLimitOptions: RateLimitOptions | undefined;
+  /** The rate limit store Megh created, closed on shutdown. */
+  private ownedRateLimitStore: RateLimitStore | null = null;
   private health = new HealthRegistry();
   private errorHandler = new MeghErrorHandler({
     isDevelopment: () => this.isDevelopment(),
@@ -230,6 +243,61 @@ export class MeghApplication implements IMeghApplication {
   useCors(options: CorsOptions) {
     this.app.register(requireCors(), options); // ✅ lazy
     return this;
+  }
+
+  /**
+   * Send security headers on every response: a Content Security Policy,
+   * HSTS, `X-Frame-Options`, `X-Content-Type-Options: nosniff` and more.
+   * Pass `false` for a header to leave it out. The API docs page from
+   * `useOpenApi()` keeps its own CSP.
+   *
+   *   app.useSecurityHeaders()
+   *   app.useSecurityHeaders({ contentSecurityPolicy: false })
+   *   app.useSecurityHeaders({
+   *     contentSecurityPolicy: { directives: { imgSrc: ["'self'", 'https://cdn.example.com'] } },
+   *   })
+   */
+  useSecurityHeaders(options?: SecurityHeadersOptions) {
+    this.assertNotStarted("useSecurityHeaders");
+    if (this.usesSecurityHeaders) {
+      throw new SystemUseError("[Megh] useSecurityHeaders() is already on.");
+    }
+    installSecurityHeaders(this.app, options, () =>
+      this.hasSwagger
+        ? (this.globalSwaggerOptions?.routePrefix ?? "/swagger")
+        : undefined,
+    );
+    this.usesSecurityHeaders = true;
+    return this;
+  }
+
+  /**
+   * Limit how many requests each client can make per window, answering 429
+   * with `Retry-After` when it is over. Defaults to 100 a minute per IP,
+   * counted in memory. Give a route its own limit with `@RateLimit()`.
+   *
+   *   app.useRateLimit()
+   *   app.useRateLimit({ max: 300, window: '5m' })
+   *   app.useRateLimit({ redis }) // share counts between replicas
+   */
+  useRateLimit(options: RateLimitOptions = {}) {
+    this.assertNotStarted("useRateLimit");
+    if (this.rateLimitOptions) {
+      throw new SystemUseError("[Megh] useRateLimit() is already on.");
+    }
+    this.rateLimitOptions = { ...options };
+    return this;
+  }
+
+  /** Install the rate limiter once routes are known. */
+  private installRateLimiting() {
+    const options =
+      this.rateLimitOptions ??
+      // Only @RateLimit() / .rateLimit() routes are limited.
+      (this.router.hasRouteRateLimits ? { global: false } : undefined);
+    if (!options) return;
+    const { store, ownsStore } = installRateLimit(this.app, options);
+    if (ownsStore) this.ownedRateLimitStore = store;
   }
 
   useCache(options?: CacheOptions) {
@@ -555,6 +623,12 @@ export class MeghApplication implements IMeghApplication {
     if (options.authorization) this.useAuthorization(options.authorization);
     if (options.multipart) this.useMultipart(options.multipart);
     if (options.staticFiles) this.useStaticFiles(options.staticFiles);
+    if (options.securityHeaders)
+      this.useSecurityHeaders(
+        options.securityHeaders === true ? {} : options.securityHeaders,
+      );
+    if (options.rateLimit)
+      this.useRateLimit(options.rateLimit === true ? {} : options.rateLimit);
     if ((options as any).scheduler)
       this.useScheduler((options as any).scheduler);
     return this;
@@ -772,6 +846,14 @@ export class MeghApplication implements IMeghApplication {
         internalLogger("app").error({ err }, "Closing the cache failed");
       }
     }
+    if (this.ownedRateLimitStore) {
+      try {
+        await this.ownedRateLimitStore.close?.();
+      } catch (err) {
+        internalLogger("app").error({ err }, "Closing the rate limiter failed");
+      }
+      this.ownedRateLimitStore = null;
+    }
     if (this.usesMail) {
       try {
         await Mailer.close();
@@ -890,6 +972,7 @@ export class MeghApplication implements IMeghApplication {
       this.scheduler.start();
     }
 
+    this.installRateLimiting();
     this.installErrorHandling();
 
     await this.app.ready();

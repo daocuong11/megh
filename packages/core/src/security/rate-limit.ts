@@ -1,0 +1,389 @@
+/**
+ * @copyright 2024
+ * @author Tareq Hossain
+ * @email xtrinsic96@gmail.com
+ * @url https://github.com/xtareq
+ */
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { IRequest } from "../core/types";
+import { TooManyRequestsException } from "../errors/http-exceptions";
+import { SKIP_GLOBAL_MIDDLEWARE } from "../observability/health";
+import { internalLogger } from "../observability/internal-logger";
+
+/** The count for one key in the current window. */
+export interface RateLimitHit {
+  /** Hits in the current window, including this one. */
+  count: number;
+  /** Epoch milliseconds when the window ends and the count starts over. */
+  resetAt: number;
+}
+
+/**
+ * Where hit counts live. The memory store is per process; use
+ * `RedisRateLimitStore`, or your own, to share counts between replicas.
+ */
+export interface RateLimitStore {
+  /** Count one hit for `key` in a window of `windowMs` milliseconds. */
+  hit(key: string, windowMs: number): RateLimitHit | Promise<RateLimitHit>;
+  /** Forget the count for `key`. */
+  reset?(key: string): void | Promise<void>;
+  /** Release timers or connections. Megh calls it on shutdown for stores it created. */
+  close?(): void | Promise<void>;
+}
+
+/** A window: milliseconds, or a duration such as `'30s'`, `'15m'`, `'1 hour'`. */
+export type RateLimitWindow = number | string;
+
+/** The limit for one route, set with `@RateLimit()` or `.rateLimit()`. */
+export interface RouteRateLimitOptions {
+  /** Requests allowed per window, per client. */
+  max?: number;
+  /** Window length. Defaults to the app's window, else one minute. */
+  window?: RateLimitWindow;
+  /** How to tell clients apart. Defaults to the app's key, else `request.ip`. */
+  key?: (request: IRequest) => string | Promise<string>;
+}
+
+/** Options for `app.useRateLimit()`. */
+export interface RateLimitOptions extends RouteRateLimitOptions {
+  /** Requests allowed per window, per client. Defaults to 100. */
+  max?: number;
+  /** Window length. Defaults to one minute. */
+  window?: RateLimitWindow;
+  /**
+   * How to tell clients apart. Defaults to `request.ip`; behind a proxy, set
+   * `server.trustProxy` so that is the client's address.
+   */
+  key?: (request: IRequest) => string | Promise<string>;
+  /** Return `true` to let a request through uncounted, e.g. an internal IP. */
+  skip?: (request: IRequest) => boolean | Promise<boolean>;
+  /** Where counts live. Defaults to memory. */
+  store?: RateLimitStore;
+  /** Shortcut for `store: new RedisRateLimitStore(redis)`, with an ioredis client. */
+  redis?: RedisEvalClient;
+  /** Send `RateLimit-*` headers on every limited response. Defaults to `true`. */
+  headers?: boolean;
+  /** The 429 message. Defaults to "Too many requests, please try again later." */
+  message?: string;
+  /**
+   * Let requests through when the store fails (Redis is down) instead of
+   * answering 500. The error is still logged. Defaults to `false`.
+   */
+  failOpen?: boolean;
+  /**
+   * Limit every route. `false` limits only routes with `@RateLimit()` or
+   * `.rateLimit()`. Defaults to `true`.
+   */
+  global?: boolean;
+}
+
+/** Route config key holding a route's own limit, or `false` to skip limiting. */
+export const RATE_LIMIT_CONFIG_KEY = "meghRateLimit";
+/** Metadata key for `@RateLimit()`. */
+export const RATE_LIMIT_META_KEY = "megh:rate-limit";
+
+const DEFAULT_MAX = 100;
+const DEFAULT_WINDOW_MS = 60_000;
+const DEFAULT_MESSAGE = "Too many requests, please try again later.";
+
+const UNITS: Record<string, number> = {
+  ms: 1,
+  millisecond: 1,
+  s: 1000,
+  sec: 1000,
+  second: 1000,
+  m: 60_000,
+  min: 60_000,
+  minute: 60_000,
+  h: 3_600_000,
+  hour: 3_600_000,
+  d: 86_400_000,
+  day: 86_400_000,
+};
+
+/** Milliseconds in a window given as a number or a duration string. */
+export function parseWindow(window: RateLimitWindow): number {
+  let ms: number;
+  if (typeof window === "number") {
+    ms = window;
+  } else {
+    const match = /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*$/i.exec(window);
+    const name = match?.[2].toLowerCase() ?? "";
+    // "ms" and "s" are units; otherwise allow a plural ("minutes").
+    const unit = UNITS[name] ?? UNITS[name.replace(/s$/, "")];
+    ms = match && unit ? Number(match[1]) * unit : NaN;
+  }
+  if (!Number.isFinite(ms) || ms < 1) {
+    throw new TypeError(
+      `[Megh] Invalid rate limit window ${JSON.stringify(window)}. Use milliseconds or a duration such as '30s', '15m' or '1 hour'.`,
+    );
+  }
+  return Math.round(ms);
+}
+
+function assertMax(max: number) {
+  if (!Number.isInteger(max) || max < 1) {
+    throw new TypeError(
+      `[Megh] Rate limit max must be a whole number of at least 1, got ${max}.`,
+    );
+  }
+}
+
+// ─── Stores ──────────────────────────────────────────────────────────────────
+
+/**
+ * Fixed-window counts in memory. Counts are per process and lost on
+ * restart. Expired windows are swept every minute by an `unref`'d timer.
+ */
+export class MemoryRateLimitStore implements RateLimitStore {
+  private readonly windows = new Map<string, RateLimitHit>();
+  private timer: ReturnType<typeof setInterval> | null = null;
+
+  constructor(private readonly sweepIntervalMs = 60_000) {}
+
+  hit(key: string, windowMs: number): RateLimitHit {
+    const now = Date.now();
+    let entry = this.windows.get(key);
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs };
+      this.windows.set(key, entry);
+      this.startSweep();
+    }
+    entry.count++;
+    return { count: entry.count, resetAt: entry.resetAt };
+  }
+
+  reset(key: string) {
+    this.windows.delete(key);
+  }
+
+  close() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.windows.clear();
+  }
+
+  private startSweep() {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      const now = Date.now();
+      for (const [key, entry] of this.windows) {
+        if (entry.resetAt <= now) this.windows.delete(key);
+      }
+      if (this.windows.size === 0) this.close();
+    }, this.sweepIntervalMs);
+    this.timer.unref();
+  }
+}
+
+/** The part of an ioredis client the Redis store uses. */
+export interface RedisEvalClient {
+  eval(
+    script: string,
+    numKeys: number,
+    ...args: (string | number)[]
+  ): Promise<unknown>;
+  del(...keys: string[]): Promise<unknown>;
+}
+
+// Count the hit and start the window on the first one, in one round trip.
+const HIT_SCRIPT = `
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl < 0 then
+  redis.call('PEXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return { count, ttl }
+`;
+
+/**
+ * Fixed-window counts in Redis, shared by every replica. Pass an ioredis
+ * client; Megh does not close it.
+ */
+export class RedisRateLimitStore implements RateLimitStore {
+  private readonly prefix: string;
+
+  constructor(
+    private readonly redis: RedisEvalClient,
+    options: { prefix?: string } = {},
+  ) {
+    if (!redis || typeof redis.eval !== "function") {
+      throw new TypeError(
+        "[Megh] RedisRateLimitStore needs an ioredis client, e.g. new RedisRateLimitStore(new Redis()).",
+      );
+    }
+    this.prefix = options.prefix ?? "megh:rate-limit:";
+  }
+
+  async hit(key: string, windowMs: number): Promise<RateLimitHit> {
+    const [count, ttl] = (await this.redis.eval(
+      HIT_SCRIPT,
+      1,
+      this.prefix + key,
+      windowMs,
+    )) as [number, number];
+    return { count: Number(count), resetAt: Date.now() + Number(ttl) };
+  }
+
+  async reset(key: string) {
+    await this.redis.del(this.prefix + key);
+  }
+}
+
+// ─── Decorator ───────────────────────────────────────────────────────────────
+
+/**
+ * Give a controller or route its own limit, in place of the app's, or pass
+ * `false` to leave it unlimited. Works without `app.useRateLimit()` too.
+ *
+ *   @Post('/login')
+ *   @RateLimit({ max: 5, window: '15m' })
+ *   login() {}
+ */
+export function RateLimit(
+  options: RouteRateLimitOptions | false,
+): ClassDecorator & MethodDecorator {
+  assertRouteRateLimit(options);
+  return (target: object, propertyKey?: string | symbol) => {
+    if (propertyKey === undefined) {
+      Reflect.defineMetadata(RATE_LIMIT_META_KEY, options, target);
+    } else {
+      Reflect.defineMetadata(RATE_LIMIT_META_KEY, options, target, propertyKey);
+    }
+  };
+}
+
+/** Throw on a bad route limit when it is declared, not on its first request. */
+export function assertRouteRateLimit(options: RouteRateLimitOptions | false) {
+  if (options === false) return;
+  if (options === null || typeof options !== "object") {
+    throw new TypeError(
+      "[Megh] A route rate limit is an options object, e.g. { max: 5, window: '1m' }, or false.",
+    );
+  }
+  if (options.max !== undefined) assertMax(options.max);
+  if (options.window !== undefined) parseWindow(options.window);
+}
+
+/** The `@RateLimit()` for a route: the method's, else the controller's. */
+export function getDeclaredRateLimit(
+  controller: Function,
+  method: string,
+): RouteRateLimitOptions | false | undefined {
+  return (
+    Reflect.getMetadata(RATE_LIMIT_META_KEY, controller.prototype, method) ??
+    Reflect.getMetadata(RATE_LIMIT_META_KEY, controller)
+  );
+}
+
+// ─── Hook ────────────────────────────────────────────────────────────────────
+
+type ResolvedLimit = {
+  max: number;
+  windowMs: number;
+  key: (request: IRequest) => string | Promise<string>;
+  /** Prefix that keeps a route's own counts apart from the app's. */
+  scope: string;
+};
+
+const defaultKey = (request: IRequest) =>
+  (request as unknown as FastifyRequest).ip;
+
+/**
+ * Count requests per client and answer 429 over the limit. Returns the
+ * store, so the app can close it on shutdown when it created it.
+ */
+export function installRateLimit(
+  app: FastifyInstance,
+  options: RateLimitOptions = {},
+): { store: RateLimitStore; ownsStore: boolean } {
+  const max = options.max ?? DEFAULT_MAX;
+  assertMax(max);
+  const windowMs = parseWindow(options.window ?? DEFAULT_WINDOW_MS);
+  const appLimit: ResolvedLimit = {
+    max,
+    windowMs,
+    key: options.key ?? defaultKey,
+    scope: "",
+  };
+  const ownsStore = !options.store;
+  const store =
+    options.store ??
+    (options.redis
+      ? new RedisRateLimitStore(options.redis)
+      : new MemoryRateLimitStore());
+  const sendHeaders = options.headers ?? true;
+  const message = options.message ?? DEFAULT_MESSAGE;
+  const limitAll = options.global ?? true;
+
+  // A route's own limit, resolved on its first request.
+  const routeLimits = new WeakMap<object, ResolvedLimit | null>();
+  const limitFor = (request: FastifyRequest): ResolvedLimit | null => {
+    const config = request.routeOptions?.config as unknown as
+      Record<string, unknown> | undefined;
+    if (!config) return limitAll ? appLimit : null;
+    let limit = routeLimits.get(config);
+    if (limit !== undefined) return limit;
+
+    const own = config[RATE_LIMIT_CONFIG_KEY] as
+      RouteRateLimitOptions | false | undefined;
+    if (own === false) limit = null;
+    else if (own) {
+      limit = {
+        max: own.max ?? appLimit.max,
+        windowMs:
+          own.window !== undefined
+            ? parseWindow(own.window)
+            : appLimit.windowMs,
+        key: own.key ?? appLimit.key,
+        scope: `${request.method}:${request.routeOptions.url}|`,
+      };
+    } else if (config[SKIP_GLOBAL_MIDDLEWARE] || !limitAll) {
+      // Health probes must answer even when a client is over its limit.
+      limit = null;
+    } else limit = appLimit;
+    routeLimits.set(config, limit);
+    return limit;
+  };
+
+  app.addHook(
+    "onRequest",
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      const limit = limitFor(request);
+      if (!limit) return;
+      const req = request as unknown as IRequest;
+      if (options.skip && (await options.skip(req))) return;
+
+      let hit: RateLimitHit;
+      try {
+        const key = String(await limit.key(req));
+        hit = await store.hit(limit.scope + key, limit.windowMs);
+      } catch (err) {
+        if (!options.failOpen) throw err;
+        internalLogger("rate-limit").error(
+          { err },
+          "Rate limit store failed; letting the request through",
+        );
+        return;
+      }
+
+      const resetSeconds = Math.max(
+        0,
+        Math.ceil((hit.resetAt - Date.now()) / 1000),
+      );
+      if (sendHeaders) {
+        reply.header("RateLimit-Limit", limit.max);
+        reply.header("RateLimit-Remaining", Math.max(0, limit.max - hit.count));
+        reply.header("RateLimit-Reset", resetSeconds);
+      }
+      if (hit.count > limit.max) {
+        throw new TooManyRequestsException(message, {
+          headers: { "Retry-After": resetSeconds },
+        });
+      }
+    },
+  );
+
+  return { store, ownsStore };
+}
