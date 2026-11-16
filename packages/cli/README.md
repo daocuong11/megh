@@ -36,6 +36,11 @@ npm run start:dev
 | `make:middleware` | `m:mlwr` | `-f`, `--root <dir>` | Create a middleware |
 | `make:dto` | `m:dto` | `-f`, `--root <dir>` | Create a class-validator DTO |
 | `make:mail` | `m:mail` | `-f`, `--root <dir>` | Create a Mailable in `src/mail` |
+| `make:event` | `m:ev` | `-f`, `--root <dir>` | Create an event in `src/events` |
+| `make:listener` | `m:lsn` | `-f`, `-e <event>`, `--root <dir>` | Create an event listener in `src/listeners`, typed to `--event` (created if missing) |
+| `make:queue` | `m:q` | `-f`, `-q <name>`, `--root <dir>` | Create a queue with a job handler in `src/queues` |
+| `make:worker` | `m:w` | `-f`, `-q <name>`, `--root <dir>` | Create a worker for a queue in `src/workers` |
+| `make:task` | `m:task`, `make:scheduler` | `-f`, `--cron <expr>`, `--interval <ms>`, `--root <dir>` | Create a scheduled task in `src/tasks` |
 | `make:seeder` | `m:sd` | `-f` | Create a seeder in `src/database/seeders` (`database` for the entry seeder) |
 | `db:seed` | | `-s <name>`, `--force` | Run the seeders in one transaction (also `migrate --seed`) |
 | `make:factory` | `m:f` | `-f` | Create a model factory in `src/database/factories`, with Faker values per column |
@@ -111,6 +116,20 @@ extending `Mailable` with `envelope()`, `content()` and `attachments()`. Send it
 with the injected `Mailer`: `mailer.to(user.email).send(new OrderShippedMail())`.
 Mail must be turned on in `src/app.ts` with `app.useMail()`; projects created
 with the `mail` feature already have it.
+
+### Events, queues and scheduled tasks
+
+```sh
+npx megh make:event UserCreated
+npx megh make:listener SendWelcomeEmail --event UserCreated
+npx megh make:queue OrderExport
+npx megh make:worker Report --queue reports
+npx megh make:task NightlyReport --cron "0 3 * * *"
+```
+
+Each one prints how to register the class in `src/app.ts`
+(`EventRegistry.getInstance().register(...)`, `app.useWorker([...])` or
+`app.useScheduler([...])`) when it isn't registered yet.
 
 ### Config
 

@@ -1,0 +1,35 @@
+import { Job, JobHandler, MeghQueue, Queue } from '@meghjs/core';
+
+/** The data each job on the "{QueueName}" queue carries. */
+export type {Base}Payload = {
+  id: number; // replace with what the job needs
+};
+
+/**
+ * The "{QueueName}" queue. It adds jobs and handles them.
+ *
+ * Register it in src/app.ts so its worker starts: `app.useWorker([{ClassName}])`.
+ * Then inject it and add jobs:
+ *
+ * @example
+ * constructor(private readonly {varName}: {ClassName}) {}
+ *
+ * await this.{varName}.add('{JobName}', { id: 1 });
+ */
+@Queue({
+  name: '{QueueName}',
+  // Redis defaults to 127.0.0.1:6379. To change it:
+  // adapter: { connection: { host: 'redis.internal', port: 6379 } },
+  // To run jobs without Redis (tests, local dev), set MEGH_QUEUE_DRIVER=memory.
+})
+export class {ClassName} extends MeghQueue<{Base}Payload> {
+  constructor() {
+    super();
+  }
+
+  @JobHandler('{JobName}')
+  async handle{JobMethod}(job: Job<{Base}Payload>) {
+    // job.data is the payload. Throw to fail the job (it is retried if you
+    // add it with { attempts }).
+  }
+}

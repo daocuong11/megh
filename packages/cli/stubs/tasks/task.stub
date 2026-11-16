@@ -1,0 +1,16 @@
+import { {Decorator}, ScheduledTask } from '@meghjs/core';
+
+/**
+ * Scheduled work. Add more methods with `@Cron`, `@Interval` or `@Timeout`,
+ * and inject services through the constructor.
+ *
+ * Register it in src/app.ts: `app.useScheduler([{ClassName}])`, or scan the
+ * folder with `app.useScheduler({ path: 'src/tasks' })`.
+ */
+@ScheduledTask()
+export class {ClassName} {
+  {DecoratorCall} // {Schedule}
+  async run() {
+    // your logic goes here
+  }
+}
