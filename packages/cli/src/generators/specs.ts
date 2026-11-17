@@ -3,6 +3,7 @@ import path from "path";
 import { log } from "../utils/log";
 import { writeFileSafe } from "../utils/project";
 import { renderStub } from "../utils/stubs";
+import { resolveCoreNameClashes } from "../utils/clashes";
 import type { ResourceField } from "./resource";
 
 /**
@@ -31,7 +32,7 @@ export function writeSpec(file: string, content: string, force: boolean | undefi
     log.info(`  Test exists, keeping: ${rel}`);
     return undefined;
   }
-  writeFileSafe(file, content, true);
+  writeFileSafe(file, resolveCoreNameClashes(content), true);
   log.success(`Test created: ${rel}`);
   return file;
 }

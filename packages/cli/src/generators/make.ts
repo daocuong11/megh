@@ -6,6 +6,7 @@ import { kebabCase, pascalCase, resolveName, snakeCase, words, type ResolvedName
 import { installedVersion, requireProjectRoot, writeFileSafe } from "../utils/project";
 import { trackWrite } from "../utils/changes";
 import { renderStub } from "../utils/stubs";
+import { resolveCoreNameClashes } from "../utils/clashes";
 import { databasePaths } from "../commands/migrate";
 import { readMigrationSchema } from "./migration-schema";
 import { pluralRoute, pluralize, renderBlankOrmModel, renderOrmModel } from "./orm-model";
@@ -112,7 +113,7 @@ function importPath(fromFile: string, toFile: string): string {
 }
 
 function write(file: string, content: string, force: boolean | undefined, label: string, projectRoot: string) {
-  writeFileSafe(file, content, force);
+  writeFileSafe(file, file.endsWith(".ts") ? resolveCoreNameClashes(content) : content, force);
   log.success(`${label} created: ${path.relative(projectRoot, file).split(path.sep).join("/")}`);
   return file;
 }

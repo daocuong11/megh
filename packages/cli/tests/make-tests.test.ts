@@ -160,6 +160,33 @@ describe("generated tests", () => {
   });
 });
 
+describe("names that clash with a @meghjs/core decorator", () => {
+  it("aliases @AppConfig for make:config app", () => {
+    makeConfig("app", { cwd: tmp });
+    const config = read("src", "config", "app.config.ts");
+    expect(config).toContain("import { AppConfig as MeghAppConfig, MeghConfig, Environment } from '@meghjs/core';");
+    expect(config).toContain("@MeghAppConfig\nexport class AppConfig extends MeghConfig");
+  });
+
+  it("aliases the @Post route decorator for a Post model", () => {
+    write("src/database/migrations/20260101000000_create_posts_table.ts", CREATE_USERS.replace('"users"', '"posts"'));
+    makeResource("post", { cwd: tmp });
+    const controller = read("src", "controllers", "post.controller.ts");
+    expect(controller).toMatch(/import \{[^}]*\bPost as MeghPost\b[^}]*\} from '@meghjs\/core';/);
+    expect(controller).toContain("import { Post } from '../models/post.model';");
+    expect(controller).toContain("@MeghPost()");
+    expect(controller).toContain("Paginated(Post)");
+    expect(controller).not.toMatch(/@Post\b/);
+    // The other decorators are untouched.
+    expect(controller).toContain("@Get('/:id')");
+  });
+
+  it("leaves files without a clash alone", () => {
+    makeConfig("jwt", { cwd: tmp });
+    expect(read("src", "config", "jwt.config.ts")).toContain("import { AppConfig, MeghConfig, Environment } from '@meghjs/core';");
+  });
+});
+
 describe("make:class", () => {
   it("writes a plain class and its test, also as m:cls", async () => {
     expect(await runCli(["m:cls", "admin/PriceList"], { cwd: tmp })).toBe(0);
