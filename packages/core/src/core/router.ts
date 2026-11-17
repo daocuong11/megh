@@ -74,6 +74,7 @@ import {
 } from "../openapi/query-params";
 import mime from "mime";
 import { HTTPMethods, FastifyInstance } from "fastify";
+import { assertParamTypes } from "../http/params";
 
 const log = internalLogger("router");
 
@@ -443,6 +444,7 @@ export class MeghRouter {
     for await (const method of methods) {
       const methodMeta = Reflect.getMetadata(ROUTE_META_KEY, prototype, method);
       if (!methodMeta) continue;
+      assertParamTypes(prototype, method, ctrl.constructor.name);
 
       const methodmetaOptions = {
         method: methodMeta.method.toLowerCase(),

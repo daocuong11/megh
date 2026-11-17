@@ -78,12 +78,27 @@ describe("Environment", () => {
     expect(env.get("TEST_KEY")).toBe("override");
   });
 
-  it("should return empty object if error occurs during parsing", () => {
+  it("still returns process.env values when .env can't be read", () => {
     mockedFs.existsSync.mockImplementation(() => {
       throw new Error("fs error");
     });
     const env = new Environment();
-    expect(env.getAll()).toEqual({});
+    expect(env.get("ONLY_PROCESS")).toBe("proc");
+    expect(env.get("ANOTHER_KEY")).toBeUndefined();
+  });
+
+  it("ignores .env entirely with MEGH_DOTENV=false", () => {
+    mockedFs.existsSync.mockReturnValue(true);
+    mockedFs.readFileSync.mockReturnValue(envContent);
+    process.env.MEGH_DOTENV = "false";
+    try {
+      const env = new Environment();
+      expect(env.get("ANOTHER_KEY")).toBeUndefined();
+      expect(env.get("ONLY_PROCESS")).toBe("proc");
+      expect(mockedFs.readFileSync).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.MEGH_DOTENV;
+    }
   });
 
   it("reads the .env file once, but process.env on every call", () => {

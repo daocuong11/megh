@@ -11,6 +11,7 @@ import fs, { existsSync } from "fs";
 import { Injectable } from "../di";
 import { internalLogger } from "../observability/internal-logger";
 import { EnvironmentVariableNotFound } from "../common/exceptions/system-exception";
+import { bumpEnvGeneration } from "./env-generation";
 
 // Load `.env` into process.env on import, so module-level code can read it.
 // Set MEGH_DOTENV=false to skip this and manage the environment yourself.
@@ -24,7 +25,8 @@ const fileCache = new Map<string, Record<string, string> | null>();
  * @class Environment
  * @description A service class to manage access to environment variables.
  * It loads variables from `.env` file and merges them with `process.env`,
- * giving precedence to `process.env` values.
+ * giving precedence to `process.env` values. With `MEGH_DOTENV=false` the
+ * `.env` file is never read and only `process.env` is used.
  */
 @Injectable()
 export class Environment {
@@ -37,6 +39,9 @@ export class Environment {
    * @returns A dictionary of merged environment variables.
    */
   private parseEnvFile(filePath: string): any {
+    // MEGH_DOTENV=false means the app manages its own environment: only
+    // process.env counts. Checked on every call, like process.env itself.
+    if (process.env.MEGH_DOTENV === "false") return { ...process.env };
     if (!fileCache.has(filePath)) {
       try {
         fileCache.set(
@@ -55,12 +60,18 @@ export class Environment {
     }
     const parsed = fileCache.get(filePath);
     // process.env is read on every call, so runtime changes still show.
-    return parsed === null ? {} : { ...parsed, ...process.env };
+    // A .env that can't be parsed is skipped (and logged once), but
+    // process.env values are still returned.
+    return parsed === null ? { ...process.env } : { ...parsed, ...process.env };
   }
 
-  /** Forget the cached `.env` contents so the next read loads the file again. */
+  /**
+   * Forget the cached `.env` contents so the next read loads the file again.
+   * Also makes the next `GetConfig()` call rebuild its config.
+   */
   static reload(): void {
     fileCache.clear();
+    bumpEnvGeneration();
   }
 
   /**
