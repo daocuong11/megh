@@ -1,0 +1,76 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MeghTest, NotFoundException } from '@meghjs/core';
+import type { Create{Model}Dto, List{Plural}Query, Update{Model}Dto } from '{dtoImport}';
+import { {ClassName} } from '{import}';
+
+/**
+ * {ClassName} with a stand-in {ServiceClass}: each test checks that a route
+ * hands its input to the service and answers with what the service returns.
+ */
+describe('{ClassName}', () => {
+  const {serviceVar} = {
+    paginate: vi.fn(),
+    findOrFail: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  };
+  let controller: {ClassName};
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    controller = MeghTest.getController({ClassName}, [{serviceVar}]);
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+
+  it('GET /{route} returns a page of {plural}', async () => {
+    const page = { data: [{ {primaryKey}: {id} }], meta: { total: 1, page: 2, perPage: 5, lastPage: 1 } };
+    {serviceVar}.paginate.mockResolvedValue(page);
+    const query = { page: 2, perPage: 5 } as List{Plural}Query;
+
+    await expect(controller.index(query)).resolves.toBe(page);
+    expect({serviceVar}.paginate).toHaveBeenCalledWith(query);
+  });
+
+  it('GET /{route}/:id returns one {modelVar}', async () => {
+    const found = { {primaryKey}: {id} };
+    {serviceVar}.findOrFail.mockResolvedValue(found);
+
+    await expect(controller.show({id})).resolves.toBe(found);
+    expect({serviceVar}.findOrFail).toHaveBeenCalledWith({id});
+  });
+
+  it('GET /{route}/:id is a 404 when there is none', async () => {
+    {serviceVar}.findOrFail.mockRejectedValue(new NotFoundException('{Model} not found'));
+
+    await expect(controller.show({id})).rejects.toThrow(NotFoundException);
+  });
+
+  it('POST /{route} creates {aModel}', async () => {
+    const body = {input} as Create{Model}Dto;
+    const created = { {primaryKey}: {id}, ...body };
+    {serviceVar}.create.mockResolvedValue(created);
+
+    await expect(controller.create(body)).resolves.toBe(created);
+    expect({serviceVar}.create).toHaveBeenCalledWith(body);
+  });
+
+  it('PUT /{route}/:id updates {aModel}', async () => {
+    const body = {changes} as Update{Model}Dto;
+    const updated = { {primaryKey}: {id}, ...body };
+    {serviceVar}.update.mockResolvedValue(updated);
+
+    await expect(controller.update({id}, body)).resolves.toBe(updated);
+    expect({serviceVar}.update).toHaveBeenCalledWith({id}, body);
+  });
+
+  it('DELETE /{route}/:id deletes {aModel}', async () => {
+    {serviceVar}.delete.mockResolvedValue(undefined);
+
+    await expect(controller.delete({id})).resolves.toEqual({ message: '{Model} deleted.' });
+    expect({serviceVar}.delete).toHaveBeenCalledWith({id});
+  });
+});

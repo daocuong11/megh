@@ -1,0 +1,16 @@
+import { describe, expect, it } from 'vitest';
+import { MeghTest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  const task = MeghTest.getProvider({ClassName});
+
+  it('should be defined', () => {
+    expect(task).toBeDefined();
+  });
+
+  it('runs', async () => {
+    // Replace with what a run should do.
+    await expect(task.run()).resolves.toBeUndefined();
+  });
+});

@@ -1,0 +1,8 @@
+import { describe, expect, it } from 'vitest';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  it('can be created', () => {
+    expect(new {ClassName}()).toBeInstanceOf({ClassName});
+  });
+});

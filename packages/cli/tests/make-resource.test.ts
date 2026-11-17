@@ -68,8 +68,16 @@ describe("make:resource from a migration", () => {
       "src/dtos/user.dto.ts",
       "src/services/user.service.ts",
       "src/controllers/user.controller.ts",
+      "src/services/user.service.spec.ts",
+      "src/controllers/user.controller.spec.ts",
     ]);
     expect(read("src", "models", "user.model.ts")).toContain('@Table("users")');
+  });
+
+  it("writes no tests with notest", () => {
+    const files = makeResource("user", { cwd: tmp, notest: true });
+    expect(files.some((f) => f.endsWith(".spec.ts"))).toBe(false);
+    expect(fs.existsSync(path.join(tmp, "src", "services", "user.service.spec.ts"))).toBe(false);
   });
 
   it("validates the writable columns in the DTOs", () => {

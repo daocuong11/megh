@@ -7,7 +7,6 @@ import { kebabCase, titleCase } from "../utils/names";
 import { renderEntrySeeder } from "../generators/make";
 import { cliVersion, coreRange, renderStub } from "../utils/stubs";
 import { ENV_TYPES_FILE, envTypesFile } from "../utils/env-types";
-import { banner } from "../utils/banner";
 
 export const PACKAGE_MANAGERS = ["npm", "yarn", "pnpm"] as const;
 export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
@@ -297,8 +296,6 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
   const { pm, features, database } = await prompt(opts);
   const orm = features.includes("orm") && database ? DATABASE_SETUP[database] : undefined;
 
-  console.log();
-  console.log(banner());
   console.log();
   console.log(`  ${c.dim("Creating project:")} ${c.bold(appName)}${minimal ? c.dim(" (minimal)") : ""}`);
 

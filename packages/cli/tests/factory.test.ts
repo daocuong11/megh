@@ -53,8 +53,8 @@ describe("make:factory", () => {
     vi.spyOn(console, "log").mockImplementation((m) => void out.push(String(m)));
     vi.spyOn(console, "warn").mockImplementation((m) => void out.push(String(m)));
     migration(tmp, "20260101000000_create_tables.ts", CREATE_TABLES);
-    makeModel("role", { cwd: tmp });
-    makeModel("user", { cwd: tmp });
+    makeModel("role", { cwd: tmp, orm: true });
+    makeModel("user", { cwd: tmp, orm: true });
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -143,8 +143,8 @@ describe("factories in db:seed", () => {
 
   it("generated factories seed rows with fake values, related rows included", async () => {
     migration(root, "20260101000000_create_tables.ts", CREATE_TABLES);
-    makeModel("role", { cwd: root });
-    makeModel("user", { cwd: root });
+    makeModel("role", { cwd: root, orm: true });
+    makeModel("user", { cwd: root, orm: true });
     makeFactory("role", { cwd: root });
     makeFactory("user", { cwd: root });
     const seeder = makeSeeder("users", { cwd: root });

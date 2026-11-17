@@ -1,0 +1,137 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MeghTest, NotFoundException, type CreateInput, type UpdateInput } from '@meghjs/core';
+import { {Model} } from '{modelImport}';
+import { {ClassName} } from '{import}';
+
+/**
+ * {ClassName} without a database: each test replaces the {Model} calls the
+ * service makes with a spy. Test the queries themselves end to end, against a
+ * real database.
+ */
+describe('{ClassName}', () => {
+  let service: {ClassName};
+
+  /** A {Model} as a query returns it. */
+  const row = (values: object = {}) => Object.assign(new {Model}(), { {primaryKey}: {id} }, values);
+
+  beforeEach(() => {
+    service = MeghTest.getProvider({ClassName});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  describe('findAll', () => {
+    it('returns every {modelVar}, ordered by {primaryKey}', async () => {
+      const rows = [row()];
+      const query = { orderBy: vi.fn().mockReturnThis(), get: vi.fn().mockResolvedValue(rows) };
+      vi.spyOn({Model}, 'query').mockReturnValue(query as never);
+
+      await expect(service.findAll()).resolves.toBe(rows);
+      expect(query.orderBy).toHaveBeenCalledWith('{primaryKey}');
+    });
+  });
+
+  describe('paginate', () => {
+    it('returns the page asked for, ordered by {primaryKey}', async () => {
+      const page = { data: [row()], meta: { total: 1, page: 2, perPage: 5, lastPage: 1 } };
+      const query = { orderBy: vi.fn().mockReturnThis(), paginate: vi.fn().mockResolvedValue(page) };
+      vi.spyOn({Model}, 'query').mockReturnValue(query as never);
+
+      await expect(service.paginate({ page: 2, perPage: 5 })).resolves.toBe(page);
+      expect(query.orderBy).toHaveBeenCalledWith('{primaryKey}');
+      expect(query.paginate).toHaveBeenCalledWith({ page: 2, perPage: 5 });
+    });
+
+    it('leaves the page and page size to the defaults when none are given', async () => {
+      const query = { orderBy: vi.fn().mockReturnThis(), paginate: vi.fn().mockResolvedValue({ data: [], meta: {} }) };
+      vi.spyOn({Model}, 'query').mockReturnValue(query as never);
+
+      await service.paginate();
+      expect(query.paginate).toHaveBeenCalledWith({});
+    });
+  });
+
+  describe('find', () => {
+    it('returns the {modelVar} with this {primaryKey}', async () => {
+      const found = row();
+      const find = vi.spyOn({Model}, 'find').mockResolvedValue(found as never);
+
+      await expect(service.find({id})).resolves.toBe(found);
+      expect(find).toHaveBeenCalledWith({id});
+    });
+
+    it('returns undefined when there is none', async () => {
+      vi.spyOn({Model}, 'find').mockResolvedValue(undefined);
+
+      await expect(service.find({id})).resolves.toBeUndefined();
+    });
+  });
+
+  describe('findOrFail', () => {
+    it('returns the {modelVar} with this {primaryKey}', async () => {
+      const found = row();
+      vi.spyOn({Model}, 'findOrFail').mockResolvedValue(found as never);
+
+      await expect(service.findOrFail({id})).resolves.toBe(found);
+    });
+
+    it('throws a 404 when there is none', async () => {
+      vi.spyOn({Model}, 'findOrFail').mockRejectedValue(new NotFoundException('{Model} not found'));
+
+      await expect(service.findOrFail({id})).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('create', () => {
+    it('inserts {aModel}', async () => {
+      const input = {input} as CreateInput<typeof {Model}>;
+      const created = row(input);
+      const create = vi.spyOn({Model}, 'create').mockResolvedValue(created as never);
+
+      await expect(service.create(input)).resolves.toBe(created);
+      expect(create).toHaveBeenCalledWith(input);
+    });
+  });
+
+  describe('update', () => {
+    it('{updateTitle}', async () => {
+      const existing = row();
+      vi.spyOn({Model}, 'findOrFail').mockResolvedValue(existing as never);
+      const fill = vi.spyOn(existing, 'fill');
+      const save = vi.spyOn(existing, 'save').mockResolvedValue(existing);
+
+      await expect(service.update({id}, {changes} as UpdateInput<{Model}>)).resolves.toBe(existing);
+      expect(fill).toHaveBeenCalledWith({sent});
+      expect(save).toHaveBeenCalled();
+    });
+
+    it('throws a 404 when there is none', async () => {
+      vi.spyOn({Model}, 'findOrFail').mockRejectedValue(new NotFoundException('{Model} not found'));
+
+      await expect(service.update({id}, {})).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('delete', () => {
+    it('deletes the {modelVar}', async () => {
+      const existing = row();
+      vi.spyOn({Model}, 'findOrFail').mockResolvedValue(existing as never);
+      const remove = vi.spyOn(existing, 'delete').mockResolvedValue();
+
+      await service.delete({id});
+      expect(remove).toHaveBeenCalled();
+    });
+
+    it('throws a 404 when there is none', async () => {
+      vi.spyOn({Model}, 'findOrFail').mockRejectedValue(new NotFoundException('{Model} not found'));
+
+      await expect(service.delete({id})).rejects.toThrow(NotFoundException);
+    });
+  });
+});

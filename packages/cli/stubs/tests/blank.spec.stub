@@ -1,0 +1,8 @@
+import { describe, expect, it } from 'vitest';
+
+describe('{Title}', () => {
+  it('works', () => {
+    // Replace with your test: import what you want to check and call it.
+    expect(1 + 1).toBe(2);
+  });
+});

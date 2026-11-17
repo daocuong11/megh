@@ -1,0 +1,92 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MeghTest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+/**
+ * {ClassName} with a stand-in {ServiceClass}: each test checks that a route
+ * hands its input to the service and answers with what the service returns.
+ */
+describe('{ClassName}', () => {
+  const {serviceVar} = {
+    findAll: vi.fn(),
+    paginate: vi.fn(),
+    findByPk: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  };
+  let controller: {ClassName};
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    controller = MeghTest.getController({ClassName}, [{serviceVar}]);
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+
+  it('GET /{route} returns every {modelVar}', async () => {
+    {serviceVar}.findAll.mockResolvedValue([{ id: 1 }]);
+
+    await expect(controller.index()).resolves.toEqual([{ id: 1 }]);
+  });
+
+  it('GET /{route}?page=2 returns that page', async () => {
+    {serviceVar}.paginate.mockResolvedValue({ current: 2, data: [] });
+
+    await expect(controller.index({ page: '2' })).resolves.toEqual({ current: 2, data: [] });
+    expect({serviceVar}.paginate).toHaveBeenCalledWith(2);
+  });
+
+  it('GET /{route}/:id returns one {modelVar}', async () => {
+    {serviceVar}.findByPk.mockResolvedValue({ id: 1 });
+
+    await expect(controller.findOne(1)).resolves.toEqual({ id: 1 });
+    expect({serviceVar}.findByPk).toHaveBeenCalledWith(1);
+  });
+
+  it('GET /{route}/:id is a 404 when there is none', async () => {
+    {serviceVar}.findByPk.mockResolvedValue(null);
+
+    await expect(controller.findOne(1)).rejects.toThrow('{Model} not found.');
+  });
+
+  it('POST /{route} creates {aModel}', async () => {
+    const body = {input};
+    {serviceVar}.create.mockResolvedValue({ id: 1, ...body });
+
+    await expect(controller.create(body)).resolves.toEqual({ id: 1, ...body });
+    expect({serviceVar}.create).toHaveBeenCalledWith(body);
+  });
+
+  it('PUT /{route}/:id updates {aModel}', async () => {
+    {serviceVar}.findByPk.mockResolvedValue({ id: 1 });
+    {serviceVar}.update.mockResolvedValue(true);
+
+    await expect(controller.update(1, {})).resolves.toEqual({ message: 'Updated successfully' });
+    expect({serviceVar}.update).toHaveBeenCalledWith(1, {});
+  });
+
+  it('PUT /{route}/:id is a 404 when there is none', async () => {
+    {serviceVar}.findByPk.mockResolvedValue(null);
+
+    await expect(controller.update(1, {})).rejects.toThrow('{Model} not found.');
+    expect({serviceVar}.update).not.toHaveBeenCalled();
+  });
+
+  it('DELETE /{route}/:id deletes {aModel}', async () => {
+    {serviceVar}.findByPk.mockResolvedValue({ id: 1 });
+    {serviceVar}.delete.mockResolvedValue(true);
+
+    await expect(controller.delete(1)).resolves.toEqual({ message: 'Deleted successfully' });
+    expect({serviceVar}.delete).toHaveBeenCalledWith(1);
+  });
+
+  it('DELETE /{route}/:id is a 404 when there is none', async () => {
+    {serviceVar}.findByPk.mockResolvedValue(null);
+
+    await expect(controller.delete(1)).rejects.toThrow('{Model} not found.');
+    expect({serviceVar}.delete).not.toHaveBeenCalled();
+  });
+});

@@ -48,6 +48,8 @@ export type ScaffoldOptions = {
   now?: Date;
   /** Reuse requested models that already exist instead of failing (without `force`). */
   reuseExisting?: boolean;
+  /** With `mode: "resource"`: don't write the service and controller unit tests. */
+  notest?: boolean;
 };
 
 /** One table to scaffold. */
@@ -233,10 +235,10 @@ export async function scaffold(projectRoot: string, requested: Target[], opts: S
     if (t.template.pivot) continue;
     const files = generatedFiles(projectRoot, t.model);
     if (t.requested && mode === "resource") {
-      makeResource(t.model, { cwd, table: t.table, force: opts.force });
+      makeResource(t.model, { cwd, table: t.table, force: opts.force, notest: opts.notest });
       result.models.push(files.model);
     } else if (!fs.existsSync(files.model) || (t.requested && opts.force)) {
-      makeModel(t.model, { cwd, table: t.table, force: opts.force && t.requested });
+      makeModel(t.model, { cwd, table: t.table, force: opts.force && t.requested, orm: true });
       result.models.push(files.model);
     } else if (!t.requested) {
       log.info(`  Model exists, reusing: ${rel(projectRoot, files.model)}`);

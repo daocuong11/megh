@@ -1,0 +1,17 @@
+import { describe, expect, it } from 'vitest';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  it('carries its payload', () => {
+    const event = new {ClassName}({ id: 1 });
+
+    expect(event.payload).toEqual({ id: 1 });
+  });
+
+  it('is named after its class and timestamped', () => {
+    const event = new {ClassName}({ id: 1 });
+
+    expect(event.name).toBe('{ClassName}');
+    expect(event.timestamp).toBeLessThanOrEqual(Date.now());
+  });
+});

@@ -27,14 +27,16 @@ npm run start:dev
 | `start` | | `--entry <file>` | Run the compiled app with `NODE_ENV=production` |
 | `doctor` | | | Check Node.js, `@meghjs/core`, `reflect-metadata` and decorator settings |
 | `route:list` | `routes` | `--json`, `--static` | List the app's routes |
-| `make:model` | `m:m` | `-f`, `--orm`, `--root <dir>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a model / TypeORM entity; with `--template` / `--fields`, also its migration |
-| `make:resource` | `m:r` | `-f`, `-t <table>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a model's DTOs, CRUD service and controller |
+| `make:model` | `m:m` | `-f`, `--orm`, `--typeorm`, `--root <dir>`, `--template [ref]`, `--fields <list>`, `--factory` | Create a plain class, a Megh ORM model (`--orm`) or a TypeORM entity (`--typeorm`); with `--template` / `--fields`, also its migration |
+| `make:resource` | `m:r` | `-f`, `-t <table>`, `--template [ref]`, `--fields <list>`, `--factory`, `--notest` | Create a model's DTOs, CRUD service and controller, with their tests |
 | `sync:model` | `s:m`, `update:model` | `-t <table>`, `--dto`, `--dry-run`, `-y`, `--root <dir>` | Sync a model's columns with its migrations, keeping relations and methods |
-| `make:controller` | `m:c` | `-f`, `-r`, `-m <model>`, `--orm`, `--root <dir>`, `--base-path` | Create a controller |
-| `make:service` | `m:s` | `-f`, `-r`, `-m <model>`, `--orm`, `--root <dir>` | Create a service |
+| `make:controller` | `m:c` | `-f`, `-r`, `-m <model>`, `--typeorm`, `--root <dir>`, `--base-path` | Create a controller |
+| `make:service` | `m:s` | `-f`, `-r`, `-m <model>`, `--typeorm`, `--root <dir>` | Create a service |
 | `make:config` | `m:cnf` | `-f`, `--root <dir>` | Create an `@AppConfig` class |
 | `make:middleware` | `m:mlwr` | `-f`, `--root <dir>` | Create a middleware |
 | `make:dto` | `m:dto` | `-f`, `--root <dir>` | Create a class-validator DTO |
+| `make:class` | `m:cls` | `-f`, `--root <dir>` | Create a plain class in `src/classes` |
+| `make:test` | `m:t` | `-f`, `--type <kind>`, `--root <dir>` | Create a unit test (`<name>.spec.ts`) for an existing file |
 | `make:mail` | `m:mail` | `-f`, `--root <dir>` | Create a Mailable in `src/mail` |
 | `make:event` | `m:ev` | `-f`, `--root <dir>` | Create an event in `src/events` |
 | `make:listener` | `m:lsn` | `-f`, `-e <event>`, `--root <dir>` | Create an event listener in `src/listeners`, typed to `--event` (created if missing) |
@@ -54,6 +56,10 @@ that import it, and asking (`-y` skips the question). `-r` / `--resource` genera
 full REST skeleton. `--root <dir>` (also `-rt`) writes under `src/<dir>`
 instead of the default folder. Names may be nested, e.g. `admin/User`: the module folder comes first, so
 `make:model admin/User` writes `src/admin/models/user.model.ts`.
+Every generator except `make:model` and the database ones also writes a
+`<name>.spec.ts` unit test next to the file; `--notest` (or `-nt`) skips it.
+`megh -v` prints the logo and version, and `megh --info` adds the Node.js, OS
+and project package versions.
 Run `megh <command> --help` for details.
 
 Generated controllers must be registered in your app with
@@ -70,7 +76,7 @@ npx megh m:c product
 npx megh m:c product -m product -r
 
 # REST controller backed by a TypeORM repository
-npx megh m:c product -m product -r --orm
+npx megh m:c product -m product -r --typeorm
 ```
 
 With `-m`, the generated controller delegates to `src/services/<model>.service.ts`,
@@ -82,8 +88,11 @@ which is created alongside it.
 # plain class
 npx megh make:model product
 
+# Megh ORM model, columns read from its migration
+npx megh make:model product --orm
+
 # TypeORM entity
-npx megh m:m product --orm
+npx megh m:m product --typeorm
 ```
 
 ### Service
@@ -92,11 +101,11 @@ npx megh m:m product --orm
 # basic service
 npx megh make:service product
 
-# resource service backed by an in-memory Collection
+# resource service backed by the Megh ORM model
 npx megh make:service product -m product -r
 
 # resource service backed by a TypeORM repository
-npx megh make:service product -m product -r --orm
+npx megh make:service product -m product -r --typeorm
 ```
 
 ### Middleware

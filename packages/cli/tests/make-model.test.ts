@@ -232,7 +232,7 @@ describe("type mapping", () => {
 describe("make:model", () => {
   it("declares the columns of the migration that creates the table", () => {
     migration("20260101000000_create_users_table.ts", CREATE_USERS);
-    makeModel("user", { cwd: tmp });
+    makeModel("user", { cwd: tmp, orm: true });
     expect(read("src", "models", "user.model.ts"))
       .toBe(`import { AutoIncrement, Column, CreatedAt, Model, PrimaryKey, Table, UpdatedAt } from "@meghjs/core";
 
@@ -281,7 +281,7 @@ export class User extends Model {
           .execute();
       }`,
     );
-    makeModel("BlogPost", { cwd: tmp });
+    makeModel("BlogPost", { cwd: tmp, orm: true });
     const content = read("src", "models", "blog-post.model.ts");
     expect(content).toContain("@PrimaryKey()\n  uuid!: string;");
     // Postgres returns bigint as text: the cast reads it as a number.
@@ -297,9 +297,9 @@ export class User extends Model {
         await db.schema.createTable("app_accounts").addColumn("id", "integer", (c) => c.primaryKey()).execute();
       }`,
     );
-    makeModel("person", { cwd: tmp });
+    makeModel("person", { cwd: tmp, orm: true });
     expect(read("src", "models", "person.model.ts")).toContain('@Table("person")');
-    makeModel("account", { cwd: tmp, table: "app_accounts" });
+    makeModel("account", { cwd: tmp, table: "app_accounts", orm: true });
     const account = read("src", "models", "account.model.ts");
     expect(account).toContain('@Table("app_accounts")');
     // A primary key without auto-increment is not generated: create() requires it.
@@ -307,7 +307,7 @@ export class User extends Model {
   });
 
   it("falls back to a placeholder model when no migration creates the table", () => {
-    makeModel("product", { cwd: tmp });
+    makeModel("product", { cwd: tmp, orm: true });
     const content = read("src", "models", "product.model.ts");
     expect(content).toContain("export class Product extends Model");
     expect(content).toContain('@Table("products")');
@@ -315,12 +315,12 @@ export class User extends Model {
     expect(content).not.toMatch(/\{(Model|table|statics|fields|source)\}/);
   });
 
-  it("keeps --orm for TypeORM entities, and works from the command line", async () => {
-    makeModel("tag", { cwd: tmp, orm: true });
+  it("makes a TypeORM entity with --typeorm, and a Megh ORM model with --orm from the command line", async () => {
+    makeModel("tag", { cwd: tmp, typeorm: true });
     expect(read("src", "models", "tag.model.ts")).toContain("@Entity");
 
     migration("20260101000000_create_users_table.ts", CREATE_USERS);
-    expect(await runCli(["make:model", "admin/User", "-t", "users"], { cwd: tmp })).toBe(0);
+    expect(await runCli(["make:model", "admin/User", "-t", "users", "--orm"], { cwd: tmp })).toBe(0);
     expect(read("src", "admin", "models", "user.model.ts")).toContain("@Column()\n  email!: string;");
   });
 });

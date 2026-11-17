@@ -25,11 +25,13 @@ import {
   makeFactory,
   syncModel,
   makeService,
+  makeClass,
+  makeTest,
 } from "./generators/make";
 import { listTemplates, makeFromTemplate, scaffoldDomain } from "./generators/scaffold";
 import { AUTH_STRATEGIES, scaffoldAuth, ROLE_MODES, scaffoldRbac } from "./generators/auth";
 import { parseFieldList } from "./templates/fields";
-import { banner } from "./utils/banner";
+import { banner, info } from "./utils/banner";
 import { log } from "./utils/log";
 import { cliVersion } from "./utils/stubs";
 import { withReview } from "./utils/changes";
@@ -50,11 +52,19 @@ export type RunOptions = {
 };
 
 /**
- * Legacy spellings commander cannot express directly: `-rt` (multi-letter
- * short flag) and `--rest` (second long name for `--resource`).
+ * Spellings commander cannot express directly: the multi-letter short flags
+ * `-rt` (`--root`) and `-nt` (`--notest`), and second long names (`--rest`
+ * for `--resource`, `--no-test` for `--notest`).
  */
+const ARG_ALIASES: Record<string, string> = {
+  "-rt": "--root",
+  "--rest": "--resource",
+  "-nt": "--notest",
+  "--no-test": "--notest",
+};
+
 export function normalizeArgv(args: string[]): string[] {
-  return args.map((a) => (a === "-rt" ? "--root" : a === "--rest" ? "--resource" : a));
+  return args.map((a) => ARG_ALIASES[a] ?? a);
 }
 
 function parseInteger(value: string) {
@@ -83,10 +93,8 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .helpCommand("help [command]", "Show help for a command")
     .showHelpAfterError("(run `megh --help` for usage)")
     .showSuggestionAfterError(true)
+    .option("--info", "Print the logo, CLI, Node.js and OS versions, and the project's Megh packages")
     .exitOverride();
-  // Root help only (`megh`, `megh --help`); subcommand help stays plain.
-  program.addHelpText("before", () => `${banner()}
-`);
 
   if (run.writeOut || run.writeErr) {
     program.configureOutput({
@@ -269,29 +277,42 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     });
 
   // ── Generators ──────────────────────────────────────────────────────────
-  const make = (name: string, aliases: string[], description: string) =>
-    sub(name, description)
+  /** A generator. Unless `tests` is false it also writes a unit test, skipped with --notest. */
+  const make = (name: string, aliases: string[], description: string, tests = true) => {
+    const cmd = sub(name, description)
       .aliases(aliases)
       .argument("<name>", "Name, optionally nested (e.g. admin/User)")
       .option("-f, --force", "Overwrite the file if it exists (shows the changes and asks first)")
       .option("-y, --yes", "Don't prompt: apply changes to existing files without asking");
+    if (tests) cmd.option("--notest", "Don't write a <name>.spec.ts unit test next to the file (also -nt)");
+    return cmd;
+  };
 
-  make("make:model", ["m:m"], "Create a model in src/models/<name>.model.ts, with columns read from its migrations")
+  make("make:model", ["m:m"], "Create a model in src/models/<name>.model.ts: a plain class, a Megh ORM model or a TypeORM entity", false)
     .option("-t, --table <table>", "Table name (default: plural snake_case name, e.g. blog_posts)")
-    .option("--orm", "Generate a TypeORM entity")
+    .option("--orm", "Generate a Megh ORM model, with columns read from its migrations")
+    .option("--typeorm", "Generate a TypeORM entity")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .option("--template [ref]", "Create the table from a template, e.g. ecommerce/product (no value: pick one)")
     .option("--fields <list>", 'Columns to add or replace, e.g. "title,price:money,status:in(draft|live)"')
     .option("--factory", "With --template/--fields: also write a factory")
     .option("--no-deps", "With --template/--fields: don't create the tables foreign keys point to")
-    .addHelpText("after", TEMPLATE_HELP)
+    .addHelpText(
+      "after",
+      "\nWithout --orm or --typeorm the model is a plain class, not mapped to a table.\n" +
+        "With --orm its columns come from the migration that creates its table (placeholders\n" +
+        "when there is none). --template and --fields always build a Megh ORM model.\n" +
+        TEMPLATE_HELP,
+    )
     .action(async (name: string, o) => {
       if (o.template !== undefined || o.fields !== undefined) {
-        if (o.orm) throw new CliError("--template and --fields build Megh ORM models; leave out --orm.");
+        if (o.typeorm) throw new CliError("--template and --fields build Megh ORM models; leave out --typeorm.");
         await review(o, () => makeFromTemplate(name, { cwd: cwd(), mode: "model", ...templateOptions(o) }), false);
         return;
       }
-      await review(o, () => makeModel(name, { cwd: cwd(), force: o.force, table: o.table, orm: o.orm, root: o.root }));
+      await review(o, () =>
+        makeModel(name, { cwd: cwd(), force: o.force, table: o.table, orm: o.orm, typeorm: o.typeorm, root: o.root }),
+      );
     });
 
   sub("sync:model", "Sync a model's columns with its migrations, keeping relations and methods")
@@ -325,7 +346,9 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
         "generated from the migration that creates its table (and the command fails if\n" +
         "there is none). Then src/dtos/<name>.dto.ts, src/services/<name>.service.ts and\n" +
         "src/controllers/<name>.controller.ts are written, e.g. for `make:resource user`:\n" +
-        "  GET /users?page=&perPage=   POST /users   GET|PUT|DELETE /users/:id",
+        "  GET /users?page=&perPage=   POST /users   GET|PUT|DELETE /users/:id\n" +
+        "The service and controller each get a .spec.ts testing every method, with the\n" +
+        "model and service replaced by spies (no database needed). Skip them with --notest.",
     )
     .option("--template [ref]", "Create the table from a template, e.g. ecommerce/product (no value: pick one)")
     .option("--fields <list>", 'Columns to add or replace, e.g. "title,price:money,status:in(draft|live)"')
@@ -336,13 +359,14 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
         await review(o, () => makeFromTemplate(name, { cwd: cwd(), mode: "resource", ...templateOptions(o) }), false);
         return;
       }
-      await review(o, () => makeResource(name, { cwd: cwd(), force: o.force, table: o.table }));
+      await review(o, () => makeResource(name, { cwd: cwd(), force: o.force, table: o.table, notest: o.notest }));
     });
 
   make("make:controller", ["m:c"], "Create a controller in src/controllers/<name>.controller.ts")
     .option("-r, --resource", "Generate a REST skeleton (also --rest)")
     .option("-m, --model <model>", "Back a REST controller with <model>: also creates its DTOs, service and model (from its migration) if missing")
-    .option("--orm", "With -m, back the service with a TypeORM repository and entity")
+    .option("--orm", "With -m, back the service with Megh ORM (the default)")
+    .option("--typeorm", "With -m, back the service with a TypeORM repository and entity")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .option("--base-path", "Use @ApiController without a path prefix")
     .action(async (name: string, o) => {
@@ -352,7 +376,8 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
   make("make:service", ["m:s"], "Create a service in src/services/<name>.service.ts")
     .option("-r, --resource", "Generate a resource (CRUD) service; requires -m (also --rest)")
     .option("-m, --model <model>", "Model for a resource service; creates the model from its migration if missing")
-    .option("--orm", "Back the resource service with a TypeORM repository and entity")
+    .option("--orm", "With -m, back the service with Megh ORM (the default)")
+    .option("--typeorm", "With -m, back the service with a TypeORM repository and entity")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .action(async (name: string, o) => {
       await review(o, () => makeService(name, { cwd: cwd(), ...o }));
@@ -417,6 +442,35 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
       await review(o, () => makeDto(name, { cwd: cwd(), ...o }));
     });
 
+  make("make:class", ["m:cls"], "Create a plain class in src/classes/<name>.ts")
+    .option("--root <dir>", "Folder under src/ to write to (also -rt)")
+    .action(async (name: string, o) => {
+      await review(o, () => makeClass(name, { cwd: cwd(), ...o }));
+    });
+
+  make("make:test", ["m:t", "m:test"], "Create a unit test (<name>.spec.ts) for an existing file", false)
+    .option(
+      "--type <kind>",
+      "What to test: service, controller, config, middleware, mail, event, listener, queue, worker, task, dto, model or class (default: from the name)",
+    )
+    .option("--root <dir>", "Folder under src/ the file is in (also -rt)")
+    .addHelpText(
+      "after",
+      [
+        "",
+        "The spec is written next to the file it tests, e.g. for src/services/user.service.ts:",
+        "  megh make:test user.service     (or UserService, or --type service user)",
+        "A resource service or controller (from make:resource) gets a test for each method;",
+        "other files a test that creates the class, and a todo for each of its methods.",
+        "A name that matches no file, e.g. `megh make:test checkout`, gets a starter spec in",
+        "src/tests/. The other generators (except make:model and the database ones) write",
+        "their test themselves; pass --notest (or -nt) to skip it.",
+      ].join("\n"),
+    )
+    .action(async (name: string, o) => {
+      await review(o, () => makeTest(name, { cwd: cwd(), force: o.force, type: o.type, root: o.root }));
+    });
+
   // ── Templates ───────────────────────────────────────────────────────────
   sub("scaffold:domain", "Create the tables (and models or resources) of a domain's templates")
     .alias("sc:domain")
@@ -424,6 +478,7 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--only <list>", "Only these templates, e.g. product,order,order_item", parseList)
     .option("--all", "Every template of the domain, without the checklist")
     .option("--resource", "Generate REST resources (DTOs, service, controller), not just models")
+    .option("--notest", "With --resource: don't write the service and controller tests (also -nt)")
     .option("--migrations-only", "Only write the migrations")
     .option("--factory", "Also write a factory for each model")
     .option("--no-deps", "Don't create the tables foreign keys point to")
@@ -439,6 +494,7 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
         factory: o.factory,
         deps: o.deps,
         force: o.force,
+        notest: o.notest,
         interactive: !o.yes,
       });
     });
@@ -523,6 +579,7 @@ function templateOptions(o: Record<string, any>) {
     force: o.force,
     factory: o.factory,
     deps: o.deps,
+    notest: o.notest,
     interactive: !o.yes,
   };
 }
@@ -534,6 +591,12 @@ function templateOptions(o: Record<string, any>) {
 export async function runCli(args: string[], run: RunOptions = {}): Promise<number> {
   const { program, exitCode } = createProgram(run);
   const argv = normalizeArgv(args);
+  // The logo is only shown here: `megh -v` / `megh --version` and `megh --info`.
+  if (argv.length === 1 && ["-v", "--version", "--info"].includes(argv[0])) {
+    const text = argv[0] === "--info" ? info(run.cwd ?? process.cwd()) : banner();
+    (run.writeOut ?? ((s: string) => process.stdout.write(s)))(`${text}\n`);
+    return 0;
+  }
   if (argv.length === 0) {
     program.outputHelp();
     return 0;
