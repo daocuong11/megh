@@ -18,6 +18,7 @@ import type { RedisOptions } from "ioredis";
 import type { PluginOptions } from "../plugins/registry";
 import type { RequestIdOptions } from "../observability/request-context";
 import type { HealthCheck, HealthOptions } from "../observability/health";
+import type { VersioningOptions } from "../http/versioning";
 import type { SecurityHeadersOptions } from "../security/headers";
 import type { RateLimitOptions } from "../security/rate-limit";
 import type {
@@ -61,6 +62,22 @@ export type GlobalOptions = {
   rateLimit?: boolean | RateLimitOptions;
   /** Task classes, or `{ path }` to scan a folder, for `useScheduler()`. */
   scheduler?: Constructor[] | SchedulerScanOptions;
+  /** `true` or options for `useCompression()`. */
+  compression?: boolean | CompressionOptions;
+};
+
+/**
+ * Options for `useCompression()`, passed to `@fastify/compress`. The common
+ * ones are typed; see its README for the rest.
+ */
+export type CompressionOptions = {
+  /** Smallest body, in bytes, worth compressing. Defaults to 1024. */
+  threshold?: number;
+  /** Encodings to offer, in order of preference. */
+  encodings?: ("br" | "gzip" | "deflate" | "identity")[];
+  /** Compress only these content types (a RegExp or a test function). */
+  customTypes?: RegExp | ((contentType: string) => boolean);
+  [option: string]: unknown;
 };
 
 /** Options for `useScheduler({ path })`: scan a folder for task classes. */
@@ -151,6 +168,17 @@ export interface IMeghApplication {
   addHealthCheck: (name: string, check: HealthCheck) => this;
   useControllers: (controllers: Constructor[] | AutoControllerOptions) => this;
   useStaticFiles: (options: any) => this;
+  /** Compress responses with `@fastify/compress`. */
+  useCompression: (options?: CompressionOptions) => this;
+  /** Put a prefix such as `/api` in front of every controller and inline route. */
+  setGlobalPrefix: (
+    prefix: string,
+    options?: { exclude?: (string | RegExp)[] },
+  ) => this;
+  /** Version controller routes with `@Version()`, by URI or header. */
+  useVersioning: (options: VersioningOptions) => this;
+  /** Validate environment variables against a DTO class at boot. */
+  useEnvSchema: (schema: Constructor<object>) => this;
   useGlobal: (options: GlobalOptions) => this;
   useSocketIo: (options?: any) => this;
 

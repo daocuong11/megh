@@ -15,6 +15,7 @@ import type {
   GlobalOptions,
   AutoControllerOptions,
   SchedulerScanOptions,
+  CompressionOptions,
   TestApplication,
   TestResponse,
 } from "./interfaces";
@@ -27,6 +28,7 @@ export {
   GlobalOptions,
   AutoControllerOptions,
   SchedulerScanOptions,
+  CompressionOptions,
   TestApplication,
   TestResponse,
 };
