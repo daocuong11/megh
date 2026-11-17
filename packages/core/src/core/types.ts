@@ -14,6 +14,7 @@ import type {
   CorsOptions,
   GlobalOptions,
   AutoControllerOptions,
+  SchedulerScanOptions,
   TestApplication,
   TestResponse,
 } from "./interfaces";
@@ -25,6 +26,7 @@ export {
   CorsOptions,
   GlobalOptions,
   AutoControllerOptions,
+  SchedulerScanOptions,
   TestApplication,
   TestResponse,
 };

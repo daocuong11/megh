@@ -152,7 +152,8 @@ export const defaultErrorLogger: ErrorLogger = (
   response,
 ) => {
   const log = internalLogger("http");
-  const route = `${request.method} ${request.url}`;
+  // Path only: query strings can carry tokens and other secrets.
+  const route = `${request.method} ${request.url.split("?")[0]}`;
   if (response.statusCode < 500) {
     log.warn(
       { statusCode: response.statusCode, route },

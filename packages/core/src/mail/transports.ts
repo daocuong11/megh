@@ -1,16 +1,16 @@
 import { internalLogger } from "../observability/internal-logger";
 import type { SmtpMailerConfig } from "./config";
 import { MailError } from "./errors";
+import { requireOptional } from "../common/utils/optional-peer";
 import type { MailMessage, MailTransport, MailTransportResult } from "./types";
 
 function requireNodemailer(): any {
-  try {
-    return require("nodemailer");
-  } catch {
-    throw new MailError(
-      "The smtp mailer needs nodemailer, which is not installed.\nRun: npm install nodemailer",
-    );
-  }
+  return requireOptional("nodemailer", {
+    error: () =>
+      new MailError(
+        "The smtp mailer needs nodemailer, which is not installed.\nRun: npm install nodemailer",
+      ),
+  });
 }
 
 /** Nodemailer transport options for an SMTP mailer. */

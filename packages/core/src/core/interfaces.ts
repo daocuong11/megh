@@ -59,6 +59,14 @@ export type GlobalOptions = {
   securityHeaders?: boolean | SecurityHeadersOptions;
   /** `true` or options for `useRateLimit()`. */
   rateLimit?: boolean | RateLimitOptions;
+  /** Task classes, or `{ path }` to scan a folder, for `useScheduler()`. */
+  scheduler?: Constructor[] | SchedulerScanOptions;
+};
+
+/** Options for `useScheduler({ path })`: scan a folder for task classes. */
+export type SchedulerScanOptions = {
+  /** Folder to scan, relative to the project root. Defaults to `src/tasks`. */
+  path?: string;
 };
 
 export type MeghApplicationOptions = PluginOptions & {

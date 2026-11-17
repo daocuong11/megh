@@ -18,21 +18,16 @@ import {
 } from "./schedule-registry";
 import { Constructor } from "../common/helpers";
 import { internalLogger } from "../observability/internal-logger";
+import { requireOptional } from "../common/utils/optional-peer";
 
 const logger = internalLogger("scheduler");
 
 // ─── Lazy loader ──────────────────────────────────────────────────────────────
 
 function requireNodeCron() {
-  try {
-    return require("node-cron");
-  } catch {
-    throw new Error(
-      "[Megh] node-cron is not installed.\n" +
-        "Run: npm install node-cron\n" +
-        "And for types: npm install -D @types/node-cron",
-    );
-  }
+  return requireOptional("node-cron", {
+    hint: "And for types: npm install -D @types/node-cron",
+  });
 }
 
 // ─── Internal handle types ────────────────────────────────────────────────────
@@ -62,6 +57,8 @@ type JobHandle = CronHandle | IntervalHandle | TimeoutHandle;
 export class MeghScheduler {
   private handles: JobHandle[] = [];
   private taskClasses: Constructor<any>[] = [];
+  /** Job runs that haven't finished yet; stopAll() waits for them. */
+  private inFlight = new Set<Promise<void>>();
 
   // ── Registration ────────────────────────────────────────────────────────────
 
@@ -201,10 +198,11 @@ export class MeghScheduler {
   // ── Shutdown ──────────────────────────────────────────────────────────────────
 
   /**
-   * Stops every running job. Called automatically on SIGTERM / SIGINT
-   * from MeghApplication.run().
+   * Stops every job, so nothing new starts, and resolves once runs that are
+   * already in progress have finished. Called by `app.close()` (and so on
+   * SIGTERM / SIGINT).
    */
-  stopAll(): void {
+  stopAll(): Promise<void> {
     for (const handle of this.handles) {
       try {
         if (handle.kind === "cron") {
@@ -228,6 +226,7 @@ export class MeghScheduler {
     }
 
     this.handles = [];
+    return Promise.all([...this.inFlight]).then(() => undefined);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -244,8 +243,9 @@ export class MeghScheduler {
   ): () => void {
     let running = false;
     const label = `${cls.name}#${methodName}`;
+    const inFlight = this.inFlight;
 
-    return async function () {
+    return function () {
       if (running) {
         logger.warn(
           `[Megh Scheduler] "${label}" previous run still in progress — skipping tick.`,
@@ -253,16 +253,20 @@ export class MeghScheduler {
         return;
       }
       running = true;
-      try {
-        await instance[methodName]();
-      } catch (err: any) {
-        logger.error(
-          { err },
-          `[Megh Scheduler] Error in "${label}": ${err?.message ?? err}`,
-        );
-      } finally {
-        running = false;
-      }
+      const run = (async () => {
+        try {
+          await instance[methodName]();
+        } catch (err: any) {
+          logger.error(
+            { err },
+            `[Megh Scheduler] Error in "${label}": ${err?.message ?? err}`,
+          );
+        } finally {
+          running = false;
+        }
+      })();
+      inFlight.add(run);
+      void run.finally(() => inFlight.delete(run));
     };
   }
 
