@@ -264,8 +264,8 @@ describe("generators", () => {
 
   it("leaves no unrendered placeholders in any stub", () => {
     makeController("a", { cwd: tmp, resource: true });
-    makeController("b", { cwd: tmp, model: "b", orm: true });
-    makeModel("c", { cwd: tmp, orm: true });
+    makeController("b", { cwd: tmp, model: "b", typeorm: true });
+    makeModel("c", { cwd: tmp, typeorm: true });
     const files = fs
       .readdirSync(path.join(tmp, "src"), { recursive: true, withFileTypes: true })
       .filter((e) => e.isFile())
@@ -424,10 +424,10 @@ describe("runCli", () => {
     return { write: (s: string) => (out += s), text: () => out };
   };
 
-  it("prints the version", async () => {
+  it("prints the version under the logo", async () => {
     const o = capture();
     expect(await runCli(["-v"], { writeOut: o.write })).toBe(0);
-    expect(o.text().trim()).toBe(require("../package.json").version);
+    expect(o.text()).toContain(`v${require("../package.json").version}`);
   });
 
   it("returns non-zero for unknown commands", async () => {

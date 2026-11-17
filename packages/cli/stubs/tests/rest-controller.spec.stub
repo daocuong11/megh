@@ -1,0 +1,39 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { MeghTest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+/**
+ * Every route is a placeholder that throws until you write it. As you build
+ * one, replace its test with what the route should return.
+ */
+describe('{ClassName}', () => {
+  let controller: {ClassName};
+
+  beforeEach(() => {
+    controller = MeghTest.getController({ClassName});
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+
+  it('GET /{route} is not implemented yet', async () => {
+    await expect(controller.index()).rejects.toThrow('Method not implemented.');
+  });
+
+  it('GET /{route}/:id is not implemented yet', async () => {
+    await expect(controller.findOne(1)).rejects.toThrow('Method not implemented.');
+  });
+
+  it('POST /{route} is not implemented yet', async () => {
+    await expect(controller.create({})).rejects.toThrow('Method not implemented.');
+  });
+
+  it('PUT /{route}/:id is not implemented yet', async () => {
+    await expect(controller.update(1, {})).rejects.toThrow('Method not implemented.');
+  });
+
+  it('DELETE /{route}/:id is not implemented yet', async () => {
+    await expect(controller.delete(1)).rejects.toThrow('Method not implemented.');
+  });
+});

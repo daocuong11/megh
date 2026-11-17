@@ -1,0 +1,94 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { MeghTest } from '@meghjs/core';
+import type { {Model} } from '{modelImport}';
+import { {ClassName} } from '{import}';
+
+/** {ClassName} with a stand-in TypeORM repository, so no database is needed. */
+describe('{ClassName}', () => {
+  const repository = {
+    find: vi.fn(),
+    count: vi.fn(),
+    findOneBy: vi.fn(),
+    findBy: vi.fn(),
+    create: vi.fn(),
+    save: vi.fn(),
+    update: vi.fn(),
+    delete: vi.fn(),
+  };
+  let service: {ClassName};
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    service = MeghTest.getProvider({ClassName}, [repository]);
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  it('findAll() passes the options on to find()', async () => {
+    const rows = [{ id: 1 }];
+    repository.find.mockResolvedValue(rows);
+
+    await expect(service.findAll({ where: { id: 1 } })).resolves.toBe(rows);
+    expect(repository.find).toHaveBeenCalledWith({ where: { id: 1 } });
+  });
+
+  it('paginate() returns a page of 10 and the pages around it', async () => {
+    repository.count.mockResolvedValue(25);
+    repository.find.mockResolvedValue([{ id: 11 }]);
+
+    await expect(service.paginate(2)).resolves.toEqual({
+      total: 25,
+      totalPage: 3,
+      current: 2,
+      next: 3,
+      prev: 1,
+      data: [{ id: 11 }],
+    });
+    expect(repository.find).toHaveBeenCalledWith({ take: 10, skip: 10 });
+  });
+
+  it('paginate() has no next page on the last page', async () => {
+    repository.count.mockResolvedValue(25);
+    repository.find.mockResolvedValue([]);
+
+    const page = await service.paginate(3);
+    expect(page.next).toBeNull();
+    expect(page.prev).toBe(2);
+  });
+
+  it('findByPk() looks the {modelVar} up by id', async () => {
+    repository.findOneBy.mockResolvedValue({ id: 1 });
+
+    await expect(service.findByPk(1)).resolves.toEqual({ id: 1 });
+    expect(repository.findOneBy).toHaveBeenCalledWith({ id: 1 });
+  });
+
+  it('create() builds and saves {aModel}', async () => {
+    const body = {input} as Partial<{Model}>;
+    const entity = { ...body };
+    repository.create.mockReturnValue(entity);
+    repository.save.mockResolvedValue({ id: 1, ...entity });
+
+    await expect(service.create(body)).resolves.toEqual({ id: 1, ...entity });
+    expect(repository.create).toHaveBeenCalledWith(body);
+    expect(repository.save).toHaveBeenCalledWith(entity);
+  });
+
+  it('update() is true when a row changed, false otherwise', async () => {
+    repository.update.mockResolvedValueOnce({ affected: 1 }).mockResolvedValueOnce({ affected: 0 });
+
+    await expect(service.update(1, {})).resolves.toBe(true);
+    await expect(service.update(2, {})).resolves.toBe(false);
+    expect(repository.update).toHaveBeenCalledWith({ id: 1 }, {});
+  });
+
+  it('delete() is true when a row was deleted, false otherwise', async () => {
+    repository.delete.mockResolvedValueOnce({ affected: 1 }).mockResolvedValueOnce({ affected: 0 });
+
+    await expect(service.delete(1)).resolves.toBe(true);
+    await expect(service.delete(2)).resolves.toBe(false);
+    expect(repository.delete).toHaveBeenCalledWith({ id: 1 });
+  });
+});

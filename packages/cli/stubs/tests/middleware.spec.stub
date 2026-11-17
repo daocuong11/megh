@@ -1,0 +1,21 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { MeghTest, type IRequest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  let middleware: {ClassName};
+
+  beforeEach(() => {
+    middleware = MeghTest.getProvider({ClassName});
+  });
+
+  it('should be defined', () => {
+    expect(middleware).toBeDefined();
+  });
+
+  it('passes the request on', async () => {
+    const req = { headers: {} } as IRequest;
+
+    await expect(middleware.invoke(req)).resolves.toBe(req);
+  });
+});

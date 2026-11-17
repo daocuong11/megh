@@ -1,27 +1,50 @@
 import { describe, expect, it } from "vitest";
 import { runCli } from "../src/program";
-import { banner } from "../src/utils/banner";
+import { banner, info } from "../src/utils/banner";
 import { cliVersion } from "../src/utils/stubs";
+
+const plain = (s: string) => s.replace(/\x1b\[\d+m/g, "");
+/** The first line of the logo, which marks the banner in any output. */
+const logoLine = () => plain(banner()).split("\n")[0];
+
+const capture = async (args: string[]) => {
+  let out = "";
+  expect(await runCli(args, { writeOut: (s) => (out += s) })).toBe(0);
+  return out;
+};
 
 describe("banner", () => {
   it("shows the logo, name and version", () => {
-    const out = banner();
-    expect(out).toContain("#########");
-    expect(out).toContain(`Megh`);
+    const out = plain(banner());
+    expect(out).toContain("Megh");
     expect(out).toContain(`v${cliVersion()}`);
     // Fits an 80-column terminal.
-    for (const line of out.replace(/\x1b\[\d+m/g, "").split("\n"))
-      expect(line.length).toBeLessThanOrEqual(80);
+    for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(80);
   });
 
-  it("is printed above the root help only", async () => {
-    let root = "";
-    await runCli(["--help"], { writeOut: (s) => (root += s) });
-    expect(root.indexOf("#########")).toBeGreaterThanOrEqual(0);
-    expect(root.indexOf("#########")).toBeLessThan(root.indexOf("Usage: megh"));
+  it("is printed by -v and --version, with the version", async () => {
+    for (const flag of ["-v", "--version"]) {
+      const out = await capture([flag]);
+      expect(out).toContain(logoLine());
+      expect(out).toContain(`v${cliVersion()}`);
+    }
+  });
 
-    let sub = "";
-    await runCli(["make:event", "--help"], { writeOut: (s) => (sub += s) });
-    expect(sub).not.toContain("#########");
+  it("is printed by --info, with the Node.js and OS versions", async () => {
+    const out = plain(await capture(["--info"]));
+    expect(out).toContain(logoLine());
+    expect(out).toContain(process.version);
+    expect(out).toMatch(/OS\s+\S/);
+    expect(plain(info(process.cwd()))).toContain("CLI");
+  });
+
+  it("is not printed by help", async () => {
+    const root = await capture(["--help"]);
+    expect(root).toContain("Usage: megh");
+    expect(root).not.toContain(logoLine());
+    expect(root).toContain("--info");
+
+    const sub = await capture(["make:event", "--help"]);
+    expect(sub).not.toContain(logoLine());
   });
 });

@@ -58,7 +58,7 @@ async function project() {
       table.integer("age");
     });`,
   );
-  expect(await runCli(["make:model", "user"], { cwd: tmp })).toBe(0);
+  expect(await runCli(["make:model", "user", "--orm"], { cwd: tmp })).toBe(0);
   write(
     "src/services/user.service.ts",
     `import { User } from "../models/user.model";

@@ -1,0 +1,20 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+{Imports}
+import { {ClassName} } from '{import}';
+{EventDeclaration}
+describe('{ClassName}', () => {
+  let listener: {ClassName};
+
+  beforeEach(() => {
+    listener = MeghTest.getProvider({ClassName});
+  });
+
+  it('should be defined', () => {
+    expect(listener).toBeDefined();
+  });
+
+  it('handles {EventClass}', async () => {
+    // Replace with what the listener should do, e.g. check a service it calls.
+    await expect(listener.handler(new {EventClass}({ id: 1 }))).resolves.toBeUndefined();
+  });
+});

@@ -66,7 +66,7 @@ export default defineMigration({
 /** The model `make:model user` writes, plus code added by hand. */
 function makeUserModel() {
   migration("20260101000000_create_users_table.ts", CREATE_USERS);
-  makeModel("user", { cwd: tmp });
+  makeModel("user", { cwd: tmp, orm: true });
   const handWritten = readModel().replace(
     /\n\}\s*$/,
     `
@@ -162,7 +162,7 @@ describe("sync:model", () => {
       "20260101000000_create_users_table.ts",
       CREATE_USERS.replace("table.timestamps();", ""),
     );
-    makeModel("user", { cwd: tmp });
+    makeModel("user", { cwd: tmp, orm: true });
     expect(readModel()).not.toContain("CreatedAt");
     migration(
       "20260102000000_alter_users_table.ts",
