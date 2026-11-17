@@ -44,6 +44,11 @@ export type ControllerOptions = {
   name?: string;
   /** Base path for the controller's routes. */
   path?: string;
+  /**
+   * API version(s) of every route in the controller, once
+   * `app.useVersioning()` is on. Same as `@Version()` on the class.
+   */
+  version?: string | string[];
 };
 
 export function createControllerDecorator(

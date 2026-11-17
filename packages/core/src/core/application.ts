@@ -16,6 +16,7 @@ import {
   LifecycleHook,
   RunOptions,
   SchedulerScanOptions,
+  CompressionOptions,
 } from "./interfaces";
 import {
   MeghErrorHandler,
@@ -46,7 +47,13 @@ import {
   HealthRegistry,
   SKIP_GLOBAL_MIDDLEWARE,
 } from "../observability/health";
-import { GetConfig, MeghConfig } from "../config/config";
+import {
+  GetConfig,
+  MeghConfig,
+  validateConfigSchemas,
+  validateEnv,
+} from "../config/config";
+import type { VersioningOptions } from "../http/versioning";
 import { MeghAuthentication } from "../security/authentication";
 import {
   SecurityHeadersOptions,
@@ -87,6 +94,7 @@ const requireScalar = () => requireOptional("@scalar/fastify-api-reference");
 const requireCors = () => requireOptional("@fastify/cors");
 const requireMultipart = () => requireOptional("@fastify/multipart");
 const requireStatic = () => requireOptional("@fastify/static");
+const requireCompress = () => requireOptional("@fastify/compress");
 
 // ---------------------------------------------------------------------------
 // Application
@@ -121,6 +129,8 @@ export class MeghApplication implements IMeghApplication {
   private usesCache = false;
   private usesMail = false;
   private usesSecurityHeaders = false;
+  private usesCompression = false;
+  private envSchemas: Constructor<object>[] = [];
   private rateLimitOptions: RateLimitOptions | undefined;
   /** The rate limit store Megh created, closed on shutdown. */
   private ownedRateLimitStore: RateLimitStore | null = null;
@@ -572,6 +582,69 @@ export class MeghApplication implements IMeghApplication {
     return this;
   }
 
+  /**
+   * Compress responses (gzip, deflate, brotli) for clients that accept it,
+   * with `@fastify/compress`. Options are passed to it; by default bodies
+   * under 1024 bytes are sent as they are.
+   *
+   *   app.useCompression()
+   *   app.useCompression({ encodings: ['gzip'] })
+   */
+  useCompression(options: CompressionOptions = {}) {
+    this.assertNotStarted("useCompression");
+    if (this.usesCompression) {
+      throw new SystemUseError("[Megh] useCompression() is already on.");
+    }
+    this.usesCompression = true;
+    this.app.register(requireCompress(), { global: true, ...options });
+    return this;
+  }
+
+  /**
+   * Put `prefix` in front of every controller and inline route:
+   * `setGlobalPrefix('/api')` serves `@Get('/users')` at `/api/users`.
+   * Health routes and the API docs page keep their own paths; `exclude`
+   * lists more routes to leave alone (paths as declared, or RegExps).
+   */
+  setGlobalPrefix(
+    prefix: string,
+    options: { exclude?: (string | RegExp)[] } = {},
+  ) {
+    this.assertNotStarted("setGlobalPrefix");
+    this.router.setGlobalPrefix(prefix, options.exclude);
+    return this;
+  }
+
+  /**
+   * Version controller routes with `@Version()`, in the path
+   * (`{ type: 'uri' }`: `/v1/users`) or from a header
+   * (`{ type: 'header' }`: `X-API-Version: 1`).
+   */
+  useVersioning(options: VersioningOptions) {
+    this.assertNotStarted("useVersioning");
+    this.router.setVersioning(options);
+    return this;
+  }
+
+  /**
+   * Validate environment variables against a DTO class when the app starts,
+   * so a missing or malformed variable fails at boot with every problem
+   * listed. Numbers and booleans are converted before validating.
+   *
+   *   class Env {
+   *     @IsInt() PORT: number;
+   *     @IsString() DATABASE_URL: string;
+   *   }
+   *   app.useEnvSchema(Env)
+   *
+   * `validateEnv(Env)` returns the converted values anywhere else.
+   */
+  useEnvSchema(schema: Constructor<object>) {
+    this.assertNotStarted("useEnvSchema");
+    this.envSchemas.push(schema);
+    return this;
+  }
+
   useGlobal(options: GlobalOptions) {
     if (options.cors) this.useCors(options.cors);
     if (options.openApi) this.useOpenApi(options.openApi);
@@ -580,6 +653,10 @@ export class MeghApplication implements IMeghApplication {
     if (options.authorization) this.useAuthorization(options.authorization);
     if (options.multipart) this.useMultipart(options.multipart);
     if (options.staticFiles) this.useStaticFiles(options.staticFiles);
+    if (options.compression)
+      this.useCompression(
+        options.compression === true ? {} : options.compression,
+      );
     if (options.securityHeaders)
       this.useSecurityHeaders(
         options.securityHeaders === true ? {} : options.securityHeaders,
@@ -650,6 +727,9 @@ export class MeghApplication implements IMeghApplication {
   }
 
   private async _mapControllers() {
+    // Load the plugins registered so far (compression, CORS, ...) first:
+    // some, like @fastify/compress, hook into routes as they are added.
+    await this.app.after();
     const safeControllers = (this.controllers ?? []).filter(
       (c) => c != null && typeof c === "function",
     );
@@ -877,6 +957,16 @@ export class MeghApplication implements IMeghApplication {
         const { SocketIoServer } = require("../realtime/websocket");
         // @ts-ignore
         Container.set(SocketIoServer, this.app.io);
+        // The app's authentication handler runs on the handshake and sets
+        // socket.data.user, which @PrivateChannel listeners require.
+        const authentication = this.router.getAuthenticationHandler();
+        if (authentication) {
+          const { handshakeAuthentication } = require("../realtime/handshake");
+          // @ts-ignore
+          this.app.io.use(
+            handshakeAuthentication(Container.get(authentication) as any),
+          );
+        }
         // @ts-ignore
         await this.app.io.on("connection", this.handleSocket.bind(this));
       } catch (e) {
@@ -904,6 +994,10 @@ export class MeghApplication implements IMeghApplication {
     if (this.alreadyRun) throw new SystemUseError("App already running");
     const listenPort = port ?? portFromEnv();
     this.alreadyRun = true;
+
+    // Settings first: a bad environment or config fails before anything starts.
+    for (const schema of this.envSchemas) validateEnv(schema);
+    validateConfigSchemas();
 
     if (this.hasSwagger) {
       await this.initSwagger(this.globalSwaggerOptions);

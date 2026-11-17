@@ -75,6 +75,15 @@ import {
 import mime from "mime";
 import { HTTPMethods, FastifyInstance } from "fastify";
 import { assertParamTypes } from "../http/params";
+import {
+  REDIRECT_META_KEY,
+  RESPONSE_HEADERS_META_KEY,
+} from "../http/route-methods";
+import {
+  VERSION_META_KEY,
+  VersioningOptions,
+  normalizeVersions,
+} from "../http/versioning";
 
 const log = internalLogger("router");
 
@@ -200,6 +209,9 @@ const ALL_METHODS: HTTPMethods[] = [
   "OPTIONS",
 ];
 
+/** Fastify route constraint used by header versioning. */
+const VERSION_CONSTRAINT = "meghVersion";
+
 function toFastifyMethod(method: string): HTTPMethods | HTTPMethods[] {
   const upper = method.toUpperCase();
   return upper === "ALL" ? ALL_METHODS : (upper as HTTPMethods);
@@ -300,6 +312,97 @@ export class MeghRouter {
   private compiledValidation: boolean;
   /** True once a mapped route declares its own rate limit. */
   hasRouteRateLimits = false;
+  private globalPrefix = "";
+  private prefixExclude: (string | RegExp)[] = [];
+  private versioning?: VersioningOptions;
+
+  /** Prefix every controller and inline route, e.g. `/api`. */
+  setGlobalPrefix(prefix: string, exclude: (string | RegExp)[] = []) {
+    const clean = prefix.trim() === "" ? "" : formatUrl(prefix);
+    this.globalPrefix = clean === "/" ? "" : clean;
+    this.prefixExclude = exclude.map((e) =>
+      typeof e === "string" ? formatUrl(e) || "/" : e,
+    );
+  }
+
+  /** Turn on URI or header versioning for controller routes. */
+  setVersioning(options: VersioningOptions) {
+    if (this.versioning) {
+      throw new Error("[Megh] useVersioning() is already on.");
+    }
+    if (options.defaultVersion !== undefined) {
+      normalizeVersions(options.defaultVersion);
+    }
+    this.versioning = options;
+    if (options.type === "header") {
+      const header = (options.header ?? "x-api-version").toLowerCase();
+      const fallback =
+        options.defaultVersion === undefined
+          ? undefined
+          : normalizeVersions(options.defaultVersion)[0];
+      // A route constraint: routes registered with { version: "2" } only
+      // match requests that ask for 2 (or the default version, when the
+      // header is missing). Routes without @Version match any request.
+      this.app.addConstraintStrategy({
+        name: VERSION_CONSTRAINT,
+        storage() {
+          const routes = new Map<string, unknown>();
+          return {
+            get: (version: string) => (routes.get(version) ?? null) as any,
+            set: (version: string, store: unknown) => {
+              routes.set(version, store);
+            },
+          };
+        },
+        deriveConstraint: (req: any) => {
+          const value = req.headers[header];
+          const version = Array.isArray(value) ? value[0] : value;
+          return typeof version === "string" && version.trim() !== ""
+            ? version.trim()
+            : fallback;
+        },
+        mustMatchWhenDerived: false,
+      } as any);
+    }
+  }
+
+  /** The URL(s) and constraints to register a route under. */
+  private routeTargets(
+    path: string,
+    versions: string[] | undefined,
+  ): { url: string; constraints?: Record<string, string> }[] {
+    const excluded = this.prefixExclude.some((e) =>
+      typeof e === "string" ? e === path : e.test(path),
+    );
+    const prefix = excluded ? "" : this.globalPrefix;
+    const join = (...parts: string[]) => formatUrl(parts.join("/")) || "/";
+    const v = this.versioning;
+    if (!v || !versions) return [{ url: join(prefix, path) }];
+    if (v.type === "uri") {
+      return versions.map((version) => ({
+        url: join(prefix, `${v.prefix ?? "v"}${version}`, path),
+      }));
+    }
+    return versions.map((version) => ({
+      url: join(prefix, path),
+      constraints: { [VERSION_CONSTRAINT]: version },
+    }));
+  }
+
+  /** Version(s) of a controller route: method, then class, then the default. */
+  private routeVersions(
+    controller: Function,
+    prototype: object,
+    method: string,
+  ): string[] | undefined {
+    if (!this.versioning) return undefined;
+    const own =
+      Reflect.getMetadata(VERSION_META_KEY, prototype, method) ??
+      Reflect.getMetadata(VERSION_META_KEY, controller) ??
+      Reflect.getMetadata(CONTROLLER_META_KEY, controller)?.options?.version;
+    const versions = own ?? this.versioning.defaultVersion;
+    return versions === undefined ? undefined : normalizeVersions(versions);
+  }
 
   constructor(
     app: FastifyInstance,
@@ -315,6 +418,11 @@ export class MeghRouter {
    */
   setAuthenticationHandler(handler: Constructor<any>) {
     this.authenticationHandler = handler;
+  }
+
+  /** The class registered with `useAuthentication`, if any. */
+  getAuthenticationHandler(): Constructor<any> | undefined {
+    return this.authenticationHandler;
   }
 
   setAuthorizeMiddleware(middleware: Constructor<any>) {
@@ -496,6 +604,10 @@ export class MeghRouter {
 
       const routePath =
         methodmetaOptions.path === "" ? "/" : methodmetaOptions.path;
+      const routeTargets = this.routeTargets(
+        routePath,
+        this.routeVersions(ctrl.constructor, prototype, method),
+      );
 
       // --- Handle multipart ---
       const isMultipart =
@@ -616,125 +728,147 @@ export class MeghRouter {
       const _queryValidators = allMeta.query.map(_compile);
       const _bodyValidators = allMeta.body.map(_compile);
 
-      this.app.route({
-        url: routePath,
-        method: toFastifyMethod(methodmetaOptions.method),
-        schema: routeSchema,
-        attachValidation: isMultipart,
-        config: {
-          [ROUTE_FILTERS_CONFIG_KEY]: _routeFilters,
-          ...(_rateLimit !== undefined && {
-            [RATE_LIMIT_CONFIG_KEY]: _rateLimit,
-          }),
-        },
-        handler: async (req, res) => {
-          let reqClone = req as unknown as IRequest;
+      // @Redirect and @ResponseHeader on the route.
+      const _redirect: { url: string; statusCode: number } | undefined =
+        Reflect.getMetadata(REDIRECT_META_KEY, prototype, method);
+      const _responseHeaders: Record<string, string> | undefined =
+        Reflect.getMetadata(RESPONSE_HEADERS_META_KEY, prototype, method);
 
-          // Order: middleware (controller, then route) → authentication →
-          // @Authorized (controller, then route) → validation → handler.
-          // Global middleware already ran as a preHandler hook.
-          if (_resolvedMw.length > 0) {
-            for (const mInst of _resolvedMw) {
-              reqClone = ((await mInst.invoke(reqClone, res)) ??
-                reqClone) as IRequest;
+      for (const target of routeTargets)
+        this.app.route({
+          url: target.url,
+          ...(target.constraints && { constraints: target.constraints }),
+          method: toFastifyMethod(methodmetaOptions.method),
+          schema: routeSchema,
+          attachValidation: isMultipart,
+          config: {
+            [ROUTE_FILTERS_CONFIG_KEY]: _routeFilters,
+            ...(_rateLimit !== undefined && {
+              [RATE_LIMIT_CONFIG_KEY]: _rateLimit,
+            }),
+          },
+          handler: async (req, res) => {
+            let reqClone = req as unknown as IRequest;
+
+            // Order: middleware (controller, then route) → authentication →
+            // @Authorized (controller, then route) → validation → handler.
+            // Global middleware already ran as a preHandler hook.
+            if (_resolvedMw.length > 0) {
+              for (const mInst of _resolvedMw) {
+                reqClone = ((await mInst.invoke(reqClone, res)) ??
+                  reqClone) as IRequest;
+                if (res.sent) return;
+              }
+            }
+
+            if (_authnInst) {
+              const user = await _authnInst.authenticate(reqClone);
               if (res.sent) return;
-            }
-          }
-
-          if (_authnInst) {
-            const user = await _authnInst.authenticate(reqClone);
-            if (res.sent) return;
-            if (user !== null && user !== undefined) {
-              (reqClone as any).user = user;
-            }
-          }
-
-          if (_authMissing) {
-            throw new ForbiddenException("Forbidden");
-          }
-
-          if (_clsAuthInst) {
-            const allowed = await _clsAuthInst.authorize(
-              reqClone,
-              authClsMeata.options,
-            );
-            if (res.sent) return;
-            if (allowed === false) throw new ForbiddenException("Forbidden");
-          }
-
-          if (_mthdAuthInst) {
-            const allowed = await _mthdAuthInst.authorize(
-              reqClone,
-              authClsMethodMeata.options,
-            );
-            if (res.sent) return;
-            if (allowed === false) throw new ForbiddenException("Forbidden");
-          }
-
-          const _argsResult = this._mapArgs(reqClone, allMeta);
-          const args =
-            _argsResult !== null &&
-            typeof (_argsResult as any).then === "function"
-              ? await (_argsResult as Promise<any[]>)
-              : (_argsResult as any[]);
-
-          if ((allMeta as any)._hasRequiredParams) {
-            for (let i = 0; i < allMeta.params.length; i++) {
-              const paramMeta = allMeta.params[i];
-              if (paramMeta.required) {
-                validateOrThrow(
-                  { [paramMeta.key]: args[paramMeta.index] },
-                  { [paramMeta.key]: { type: paramMeta.dataType } },
-                  { location: "param" },
-                );
+              if (user !== null && user !== undefined) {
+                (reqClone as any).user = user;
               }
             }
-          }
 
-          if ((allMeta as any)._hasValidatorQuery) {
-            for (let i = 0; i < allMeta.query.length; i++) {
-              const queryMeta = allMeta.query[i];
-              if (queryMeta.validatorClass) {
-                const { value, errors } =
-                  _queryValidators[i]?.(args[queryMeta.index]) ??
-                  (await transformAndValidate(
-                    queryMeta.dataType,
-                    args[queryMeta.index],
-                  ));
-                if (errors) throw validationError(errors);
-                args[queryMeta.index] = value;
-              }
-              if (queryMeta.required) {
-                validateOrThrow(
-                  { [queryMeta.key]: args[queryMeta.index] },
-                  { [queryMeta.key]: { type: queryMeta.dataType } },
-                  { location: "queryparam" },
-                );
+            if (_authMissing) {
+              throw new ForbiddenException("Forbidden");
+            }
+
+            if (_clsAuthInst) {
+              const allowed = await _clsAuthInst.authorize(
+                reqClone,
+                authClsMeata.options,
+              );
+              if (res.sent) return;
+              if (allowed === false) throw new ForbiddenException("Forbidden");
+            }
+
+            if (_mthdAuthInst) {
+              const allowed = await _mthdAuthInst.authorize(
+                reqClone,
+                authClsMethodMeata.options,
+              );
+              if (res.sent) return;
+              if (allowed === false) throw new ForbiddenException("Forbidden");
+            }
+
+            const _argsResult = this._mapArgs(reqClone, allMeta);
+            const args =
+              _argsResult !== null &&
+              typeof (_argsResult as any).then === "function"
+                ? await (_argsResult as Promise<any[]>)
+                : (_argsResult as any[]);
+
+            if ((allMeta as any)._hasRequiredParams) {
+              for (let i = 0; i < allMeta.params.length; i++) {
+                const paramMeta = allMeta.params[i];
+                if (paramMeta.required) {
+                  validateOrThrow(
+                    { [paramMeta.key]: args[paramMeta.index] },
+                    { [paramMeta.key]: { type: paramMeta.dataType } },
+                    { location: "param" },
+                  );
+                }
               }
             }
-          }
 
-          if (!isMultipart && (allMeta as any)._hasValidatorBody) {
-            for (let i = 0; i < allMeta.body.length; i++) {
-              const bodyMeta = allMeta.body[i];
-              if (bodyMeta.validatorClass) {
-                const { value, errors } =
-                  _bodyValidators[i]?.(args[bodyMeta.index]) ??
-                  (await transformAndValidate(
-                    bodyMeta.dataType,
-                    args[bodyMeta.index],
-                  ));
-                if (errors) throw validationError(errors);
-                args[bodyMeta.index] = value;
+            if ((allMeta as any)._hasValidatorQuery) {
+              for (let i = 0; i < allMeta.query.length; i++) {
+                const queryMeta = allMeta.query[i];
+                if (queryMeta.validatorClass) {
+                  const { value, errors } =
+                    _queryValidators[i]?.(args[queryMeta.index]) ??
+                    (await transformAndValidate(
+                      queryMeta.dataType,
+                      args[queryMeta.index],
+                    ));
+                  if (errors) throw validationError(errors);
+                  args[queryMeta.index] = value;
+                }
+                if (queryMeta.required) {
+                  validateOrThrow(
+                    { [queryMeta.key]: args[queryMeta.index] },
+                    { [queryMeta.key]: { type: queryMeta.dataType } },
+                    { location: "queryparam" },
+                  );
+                }
               }
             }
-          }
 
-          const result = await prototype[method].apply(ctrl, args);
+            if (!isMultipart && (allMeta as any)._hasValidatorBody) {
+              for (let i = 0; i < allMeta.body.length; i++) {
+                const bodyMeta = allMeta.body[i];
+                if (bodyMeta.validatorClass) {
+                  const { value, errors } =
+                    _bodyValidators[i]?.(args[bodyMeta.index]) ??
+                    (await transformAndValidate(
+                      bodyMeta.dataType,
+                      args[bodyMeta.index],
+                    ));
+                  if (errors) throw validationError(errors);
+                  args[bodyMeta.index] = value;
+                }
+              }
+            }
 
-          return sendResult(res, result, _httpCode);
-        },
-      });
+            const result = await prototype[method].apply(ctrl, args);
+
+            if (_responseHeaders) {
+              for (const [name, value] of Object.entries(_responseHeaders)) {
+                res.header(name, value);
+              }
+            }
+            if (_redirect && !(result instanceof HttpResult)) {
+              // `{ url, statusCode }` from the handler overrides the decorator.
+              const url =
+                typeof result?.url === "string" ? result.url : _redirect.url;
+              const code = Number.isInteger(result?.statusCode)
+                ? result.statusCode
+                : _redirect.statusCode;
+              return res.code(code).header("location", url).send();
+            }
+            return sendResult(res, result, _httpCode);
+          },
+        });
     }
   }
 
@@ -972,7 +1106,7 @@ export class MeghRouter {
 
       this.app.route({
         method: toFastifyMethod(m),
-        url: r,
+        url: this.routeTargets(r, undefined)[0].url,
         schema: routeSchema,
         ...(value.rateLimit !== undefined && {
           config: { [RATE_LIMIT_CONFIG_KEY]: value.rateLimit },

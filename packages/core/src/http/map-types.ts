@@ -20,10 +20,14 @@ import {
 } from "../validator/metadata";
 import {
   getRegisteredSchemaProperties,
-  getTransformerProperties,
   getTransformerStorage,
   registerSchemaProperty,
 } from "../openapi/schema-properties";
+import {
+  classValidator,
+  classValidatorRules,
+  dtoProperties,
+} from "../validator/dto";
 
 type Constructor<T = any> = new (...args: any[]) => T;
 
@@ -99,24 +103,9 @@ function deriveClass(
   return Derived;
 }
 
-/** Every property name any of the metadata sources knows about. */
+/** Every property name the DTO declares, plus `design:type` ones. */
 function propertiesOf(BaseClass: Function): string[] {
-  const names = new Set<string>();
-  for (const meta of classValidatorRules(BaseClass)) {
-    if (meta.propertyName) names.add(meta.propertyName);
-  }
-  for (const rule of getValidationRules(BaseClass))
-    names.add(rule.propertyName);
-  for (const key of getTransformerProperties(BaseClass)) names.add(key);
-  for (const key of getRegisteredSchemaProperties(BaseClass)) names.add(key);
-  for (let proto = BaseClass.prototype; proto && proto !== Object.prototype;) {
-    for (const key of Reflect.ownKeys(proto)) {
-      if (typeof key !== "string" || key === "constructor") continue;
-      if (Reflect.hasOwnMetadata("design:type", proto, key)) names.add(key);
-    }
-    proto = Object.getPrototypeOf(proto);
-  }
-  return [...names];
+  return dtoProperties(BaseClass);
 }
 
 /** `design:type`, `@OpenApiProperty` and other per-property reflect metadata. */
@@ -142,23 +131,6 @@ function copyReflectMetadata(
 }
 
 // ── class-validator ────────────────────────────────────────────────────────
-
-function classValidator(): any {
-  try {
-    return require("class-validator");
-  } catch {
-    return undefined;
-  }
-}
-
-/** The class's class-validator rules, own and inherited. */
-function classValidatorRules(target: Function): any[] {
-  const cv = classValidator();
-  if (!cv) return [];
-  return cv
-    .getMetadataStorage()
-    .getTargetValidationMetadatas(target, undefined, true, false);
-}
 
 function copyClassValidatorRules(
   BaseClass: Function,
