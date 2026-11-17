@@ -252,3 +252,30 @@ export function getTransformedProperties(target: Function): string[] {
 export function hasTransformRules(target: Function): boolean {
   return getTransformedProperties(target).length > 0;
 }
+
+/**
+ * Copy the Megh rules of `source` (own and inherited) that apply to the
+ * properties `include` accepts onto `target`. Used by PartialType, PickType
+ * and OmitType, whose classes don't extend the source.
+ */
+export function copyRules(
+  source: Function,
+  target: Function,
+  include: (propertyName: string) => boolean,
+): void {
+  for (const rule of getValidationRules(source)) {
+    if (include(rule.propertyName)) addValidationRule({ ...rule, target });
+  }
+  for (const name of getTransformedProperties(source)) {
+    if (!include(name)) continue;
+    const type = findTypeRule(source, name);
+    if (type) addTypeRule(target, name, type);
+    // findTransformRules reads ancestors, then the class, each newest first;
+    // stored as own ++ ancestors, the copy reads back in that same order.
+    for (const cls of [source, ...getAncestors(source)]) {
+      for (const rule of transformRules.get(cls)?.get(name) ?? []) {
+        addTransformRule(target, name, rule);
+      }
+    }
+  }
+}

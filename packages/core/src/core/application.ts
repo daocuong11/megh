@@ -5,8 +5,6 @@
  * @url https://github.com/xtareq
  */
 import Fastify, { FastifyInstance } from "fastify";
-import path from "path";
-import fs from "fs";
 import { MeghRouter } from "./router";
 import { Container } from "../di";
 import {
@@ -17,6 +15,7 @@ import {
   CacheOptions,
   LifecycleHook,
   RunOptions,
+  SchedulerScanOptions,
 } from "./interfaces";
 import {
   MeghErrorHandler,
@@ -60,7 +59,12 @@ import {
 } from "../security/rate-limit";
 import { registerPlugins } from "../plugins/registry";
 import { internalLogger } from "../observability/internal-logger";
-import { resolveSourceDir } from "../common/utils/path-utils";
+import {
+  isTypeScriptRuntime,
+  resolveSourceDir,
+} from "../common/utils/path-utils";
+import { requireOptional } from "../common/utils/optional-peer";
+import { scanModules } from "./discovery";
 import {
   DEFAULT_REQUEST_ID_HEADER,
   createRequestIdGenerator,
@@ -70,82 +74,19 @@ import {
 // Lazy loaders for optional peer dependencies
 // ---------------------------------------------------------------------------
 
-function requireSocketIo() {
-  try {
-    return require("fastify-socket.io");
-  } catch {
-    throw new Error(
-      "[Megh] fastify-socket.io is not installed.\n" +
-        "Run: npm install fastify-socket.io socket.io",
-    );
-  }
-}
-
-function requireSwagger() {
-  try {
-    return require("@fastify/swagger");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/swagger is not installed.\n" +
-        "Run: npm install @fastify/swagger @fastify/swagger-ui",
-    );
-  }
-}
-
-function requireSwaggerUi() {
-  try {
-    return require("@fastify/swagger-ui");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/swagger-ui is not installed.\n" +
-        "Run: npm install @fastify/swagger-ui",
-    );
-  }
-}
-
-function requireScalar() {
-  try {
-    return require("@scalar/fastify-api-reference");
-  } catch {
-    throw new Error(
-      "[Megh] @scalar/fastify-api-reference is not installed.\n" +
-        "Run: npm install @scalar/fastify-api-reference",
-    );
-  }
-}
-
-function requireCors() {
-  try {
-    return require("@fastify/cors");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/cors is not installed.\n" +
-        "Run: npm install @fastify/cors",
-    );
-  }
-}
-
-function requireMultipart() {
-  try {
-    return require("@fastify/multipart");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/multipart is not installed.\n" +
-        "Run: npm install @fastify/multipart",
-    );
-  }
-}
-
-function requireStatic() {
-  try {
-    return require("@fastify/static");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/static is not installed.\n" +
-        "Run: npm install @fastify/static",
-    );
-  }
-}
+const requireSocketIo = () =>
+  requireOptional("fastify-socket.io", {
+    install: ["fastify-socket.io", "socket.io"],
+  });
+const requireSwagger = () =>
+  requireOptional("@fastify/swagger", {
+    install: ["@fastify/swagger", "@fastify/swagger-ui"],
+  });
+const requireSwaggerUi = () => requireOptional("@fastify/swagger-ui");
+const requireScalar = () => requireOptional("@scalar/fastify-api-reference");
+const requireCors = () => requireOptional("@fastify/cors");
+const requireMultipart = () => requireOptional("@fastify/multipart");
+const requireStatic = () => requireOptional("@fastify/static");
 
 // ---------------------------------------------------------------------------
 // Application
@@ -227,9 +168,19 @@ export class MeghApplication implements IMeghApplication {
     return this.pluginNames;
   }
 
+  /**
+   * The application. The first call creates it with `options`; later calls
+   * return the same instance, and options passed to them are ignored (with a
+   * warning).
+   */
   public static getApp(options?: MeghApplicationOptions) {
     if (!MeghApplication.instance) {
       MeghApplication.instance = new MeghApplication(options);
+    } else if (options !== undefined) {
+      internalLogger("app").warn(
+        "getApp(options) was called after the app was created; these options are ignored. " +
+          "Pass options only to the first getApp() call.",
+      );
     }
     return MeghApplication.instance;
   }
@@ -411,10 +362,10 @@ export class MeghApplication implements IMeghApplication {
       await this.app.register(requireScalar(), {
         // ✅ lazy
         routePrefix,
+        // No `content`: with @fastify/swagger registered (above), Scalar
+        // serves `fastify.swagger()`, the generated document. A `url` or
+        // `content` in the options below still takes precedence.
         configuration: {
-          spec: {
-            content: () => requireSwagger(),
-          },
           ...options?.uiConfig,
           ...options?.configuration,
           ...options?.scalar,
@@ -583,9 +534,11 @@ export class MeghApplication implements IMeghApplication {
    * Auto-scan a directory (mirrors useControllers):
    *   app.useScheduler({ path: "src/tasks" })
    */
-  useScheduler(tasks: Constructor[] | { path: string }) {
+  useScheduler(tasks: Constructor[] | SchedulerScanOptions = {}) {
     if (Array.isArray(tasks)) {
-      this.schedulerTasks = tasks;
+      for (const task of tasks) {
+        if (!this.schedulerTasks.includes(task)) this.schedulerTasks.push(task);
+      }
       this.scheduler.addTaskClasses(tasks);
     } else {
       this.registerSchedulerAuto = true;
@@ -594,14 +547,17 @@ export class MeghApplication implements IMeghApplication {
     return this;
   }
 
+  /**
+   * Register controller classes, or `{ auto: true }` to scan for them.
+   * Calling it again adds to the earlier list.
+   */
   useControllers(controllers: Constructor[] | AutoControllerOptions) {
     if (Array.isArray(controllers)) {
-      this.controllers = controllers;
-      controllers.forEach((controller) => {
+      for (const controller of controllers) {
         if (!this.controllers.includes(controller)) {
           this.controllers.push(controller);
         }
-      });
+      }
     } else {
       this.registerControllerAuto = true;
       if (controllers.path) {
@@ -630,8 +586,7 @@ export class MeghApplication implements IMeghApplication {
       );
     if (options.rateLimit)
       this.useRateLimit(options.rateLimit === true ? {} : options.rateLimit);
-    if ((options as any).scheduler)
-      this.useScheduler((options as any).scheduler);
+    if (options.scheduler) this.useScheduler(options.scheduler);
     return this;
   }
 
@@ -710,58 +665,37 @@ export class MeghApplication implements IMeghApplication {
   }
 
   private _resolveControllerDir(dir?: string) {
-    const isTsNode =
-      process.env.TS_NODE_DEV ||
-      process.env.TS_NODE_PROJECT ||
-      (process as any)[Symbol.for("ts-node.register.instance")];
     return resolveSourceDir(
       dir ?? this.registerControllerPath ?? "src",
-      !!isTsNode,
+      isTypeScriptRuntime(),
     );
   }
 
   private async autoControllers(controllersPath?: string) {
     const conDir = this._resolveControllerDir(controllersPath);
-    const isTsNode =
-      process.env.TS_NODE_DEV ||
-      process.env.TS_NODE_PROJECT ||
-      (process as any)[Symbol.for("ts-node.register.instance")];
+    // Without a path, look in every folder named `controllers` under src/:
+    // src/controllers/** and module folders such as src/users/controllers/**.
+    const inControllersFolder = (file: string) =>
+      file.split(/[\\/]/).slice(0, -1).includes("controllers");
+    const scanAll =
+      controllersPath !== undefined ||
+      this.registerControllerPath !== undefined;
 
-    try {
-      const files = fs.readdirSync(conDir, {
-        recursive: true,
-        encoding: "utf-8",
-      }) as string[];
+    await scanModules(conDir, "controllers", {
+      include: (file) => scanAll || inControllersFolder(file),
+      visit: (exports) => this.collectControllers(exports),
+    });
+  }
 
-      // Without a path, look in every folder named `controllers` under src/:
-      // src/controllers/** and module folders such as src/users/controllers/**.
-      const inControllersFolder = (file: string) =>
-        file.split(/[\\/]/).slice(0, -1).includes("controllers");
-      const scanAll =
-        controllersPath !== undefined ||
-        this.registerControllerPath !== undefined;
-
-      for (const file of files) {
-        const isTestFile = /\.(test|spec|e2e-spec)\.(ts|js)$/.test(file);
-        if (isTestFile) continue;
-        if (!scanAll && !inControllersFolder(file)) continue;
-        if (isTsNode ? file.endsWith(".ts") : file.endsWith(".js")) {
-          const filePath = path.join(conDir, file);
-          const module = await import(filePath);
-          for (const exported of Object.values(module)) {
-            if (typeof exported === "function" && isApiController(exported)) {
-              if (!this.controllers.some((con) => exported.name === con.name)) {
-                this.controllers.push(exported);
-              }
-            }
-          }
-        }
+  private collectControllers(exports: unknown[]) {
+    for (const exported of exports) {
+      if (
+        typeof exported === "function" &&
+        isApiController(exported) &&
+        !this.controllers.includes(exported)
+      ) {
+        this.controllers.push(exported);
       }
-    } catch (e) {
-      internalLogger("app").warn(
-        { err: e, dir: conDir },
-        "Could not auto-register controllers",
-      );
     }
   }
 
@@ -850,7 +784,8 @@ export class MeghApplication implements IMeghApplication {
       this.signalHandler = null;
     }
     await this.app.close();
-    this.scheduler.stopAll();
+    // Stops every job and waits for runs already in progress.
+    await this.scheduler.stopAll();
     await this._closeWorkers();
     if (this.usesCache) {
       try {
@@ -901,45 +836,52 @@ export class MeghApplication implements IMeghApplication {
   // ── Run ──────────────────────────────────────────────────────────────────
 
   private async _autoSchedulerTasks(): Promise<void> {
-    const isTsNode =
-      process.env.TS_NODE_DEV ||
-      process.env.TS_NODE_PROJECT ||
-      (process as any)[Symbol.for("ts-node.register.instance")];
-    const nodePath = require("path");
-    const nodeFs = require("fs");
     const resolvedDir = resolveSourceDir(
       this.registerSchedulerPath,
-      !!isTsNode,
+      isTypeScriptRuntime(),
     );
-    try {
-      const files = nodeFs.readdirSync(resolvedDir, {
-        recursive: true,
-        encoding: "utf-8",
-      }) as string[];
-      for (const file of files) {
-        const isTest = /\.(test|spec|e2e-spec)\.(ts|js)$/.test(file);
-        if (isTest) continue;
-        if (isTsNode ? file.endsWith(".ts") : file.endsWith(".js")) {
-          const mod = await import(nodePath.join(resolvedDir, file));
-          for (const exported of Object.values(mod)) {
-            if (typeof exported === "function" && isScheduledTask(exported)) {
-              if (
-                !this.schedulerTasks.some(
-                  (t) => t.name === (exported as any).name,
-                )
-              ) {
-                this.schedulerTasks.push(exported);
-                this.scheduler.addTaskClasses([exported as any]);
-              }
-            }
-          }
-        }
+    await scanModules(resolvedDir, "tasks", {
+      visit: (exports) => this.collectTasks(exports),
+    });
+  }
+
+  private collectTasks(exports: unknown[]) {
+    for (const exported of exports) {
+      if (
+        typeof exported === "function" &&
+        isScheduledTask(exported) &&
+        !this.schedulerTasks.includes(exported)
+      ) {
+        this.schedulerTasks.push(exported);
+        this.scheduler.addTaskClasses([exported as Constructor]);
       }
-    } catch (e) {
-      internalLogger("scheduler").warn(
-        { err: e, dir: resolvedDir },
-        "Could not auto-register tasks",
-      );
+    }
+  }
+
+  /** Rate limiting, error handling, Fastify `ready()` and Socket.IO. */
+  private async finishStartup() {
+    this.installRateLimiting();
+    this.installErrorHandling();
+
+    await this.app.ready();
+
+    if (this._hasWebsocket) {
+      // @ts-ignore
+      if (!this.app.io) {
+        throw new Error(
+          "Socket.IO not initialized. Make sure fastify-socket.io is registered correctly.",
+        );
+      }
+      // ✅ lazy — resolve SocketIoServer token only when websocket is ready
+      try {
+        const { SocketIoServer } = require("../realtime/websocket");
+        // @ts-ignore
+        Container.set(SocketIoServer, this.app.io);
+        // @ts-ignore
+        await this.app.io.on("connection", this.handleSocket.bind(this));
+      } catch (e) {
+        internalLogger("realtime").warn({ err: e }, "WebSocket setup error");
+      }
     }
   }
 
@@ -985,28 +927,13 @@ export class MeghApplication implements IMeghApplication {
       this.scheduler.start();
     }
 
-    this.installRateLimiting();
-    this.installErrorHandling();
-
-    await this.app.ready();
-
-    if (this._hasWebsocket) {
-      // @ts-ignore
-      if (!this.app.io) {
-        throw new Error(
-          "Socket.IO not initialized. Make sure fastify-socket.io is registered correctly.",
-        );
-      }
-      // ✅ lazy — resolve SocketIoServer token only when websocket is ready
-      try {
-        const { SocketIoServer } = require("../realtime/websocket");
-        // @ts-ignore
-        Container.set(SocketIoServer, this.app.io);
-        // @ts-ignore
-        await this.app.io.on("connection", this.handleSocket.bind(this));
-      } catch (e) {
-        internalLogger("realtime").warn({ err: e }, "WebSocket setup error");
-      }
+    try {
+      await this.finishStartup();
+    } catch (err) {
+      // Startup failed after the jobs started: stop them, or their timers
+      // keep running (and the process alive) for an app that never served.
+      await this.scheduler.stopAll();
+      throw err;
     }
 
     const timeout = runOptions.shutdownTimeout ?? 10_000;
@@ -1033,7 +960,16 @@ export class MeghApplication implements IMeghApplication {
     process.once("SIGINT", gracefulStop);
 
     const host = runOptions.host ?? process.env.HOST ?? "0.0.0.0";
-    const address = await this.app.listen({ port: listenPort, host });
+    let address: string;
+    try {
+      address = await this.app.listen({ port: listenPort, host });
+    } catch (err) {
+      process.removeListener("SIGTERM", gracefulStop);
+      process.removeListener("SIGINT", gracefulStop);
+      this.signalHandler = null;
+      await this.scheduler.stopAll();
+      throw err;
+    }
     internalLogger("app").info(
       { address },
       `Application running on ${address}`,

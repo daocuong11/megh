@@ -117,8 +117,14 @@ function createParamDecorator(
       const paramNames = readParameterNames(
         propertyKey !== undefined ? target?.[propertyKey] : target,
       );
-      // design:paramtypes is missing under tsx / esbuild / SWC; treat the
-      // parameter as untyped instead of crashing.
+      // design:paramtypes is missing under tsx / esbuild / SWC without
+      // decorator metadata. The router fails at boot for a @Body() or
+      // @Query() that needs it (see assertParamTypes).
+      const hasParamTypes = Reflect.hasMetadata(
+        "design:paramtypes",
+        target,
+        propertyKey,
+      );
       const parameterTypes: unknown[] =
         Reflect.getMetadata("design:paramtypes", target, propertyKey) || [];
       const paramDataType = options.type ?? parameterTypes[parameterIndex];
@@ -137,6 +143,7 @@ function createParamDecorator(
         // nested DTO class is defined.
         schema: null,
         type,
+        missingType: options.type === undefined && !hasParamTypes,
       });
       Reflect.defineMetadata(metaKey, existingParams, target, propertyKey);
     };
@@ -148,3 +155,39 @@ export const Query = createParamDecorator("route:query");
 export const Body = createParamDecorator("route:body");
 export const Header = createParamDecorator("route:header");
 export const AuthUser = createParamDecorator("route:user");
+
+/**
+ * Fail at boot when a route's `@Body()` or `@Query()` parameter has no type
+ * because the compiler didn't emit decorator metadata. Without it the DTO
+ * would silently go unvalidated.
+ */
+export function assertParamTypes(
+  prototype: object,
+  method: string,
+  className: string,
+): void {
+  for (const metaKey of [REQUEST_BODY_META_KEY, QUERY_META_KEY]) {
+    const params: {
+      missingType?: boolean;
+      index: number;
+      key: string;
+      validate: boolean;
+    }[] = Reflect.getMetadata(metaKey, prototype, method) || [];
+    // A whole-body/query parameter that should be validated. Keyed ones
+    // (`@Body("name")`) and `{ validate: false }` don't need a DTO class.
+    const missing = params.find(
+      (p) => p.missingType && p.key === "all" && p.validate !== false,
+    );
+    if (!missing) continue;
+    const decorator =
+      metaKey === REQUEST_BODY_META_KEY ? "@Body()" : "@Query()";
+    throw new Error(
+      `[Megh] ${className}.${method}: ${decorator} (parameter ${missing.index}) has no type, ` +
+        "because decorator metadata wasn't emitted. Megh reads the DTO class from it to validate the request. " +
+        "Enable \"emitDecoratorMetadata\" (with \"experimentalDecorators\") in tsconfig.json and compile with tsc, " +
+        "megh serve or megh build; with SWC set jsc.transform.decoratorMetadata: true. tsx and esbuild can't emit it: " +
+        `pass the type instead, e.g. ${decorator.replace("()", "({ type: MyDto })")}, ` +
+        "or { validate: false } for an unvalidated value.",
+    );
+  }
+}

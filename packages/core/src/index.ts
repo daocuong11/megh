@@ -46,6 +46,10 @@ export * from "./mail";
 // ─── Scheduler ───────────────────────────────────────────────────────────────
 export * from "./scheduler/schedule-decorator";
 export { MeghScheduler } from "./scheduler/scheduler";
+export type {
+  BaseJobOptions,
+  CronOptions,
+} from "./scheduler/schedule-registry";
 
 // ─── Security ────────────────────────────────────────────────────────────────
 export * from "./security";

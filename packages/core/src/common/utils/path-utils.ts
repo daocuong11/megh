@@ -5,6 +5,7 @@
  * @url https://github.com/xtareq
  */
 import path from "path";
+import fs from "fs";
 import { randomUUID } from "crypto";
 
 /**
@@ -109,14 +110,138 @@ export function contentDisposition(filename: string): string {
 }
 
 /**
- * Absolute directory for a project-relative source path such as
- * `src/controllers`. Outside ts-node the compiled output is read instead, so
- * a leading `src` segment becomes `dist`. Only that segment changes: a `src`
- * elsewhere in the absolute path (`/home/me/src/app`) is left alone.
+ * True when the process runs TypeScript sources directly: ts-node, tsx,
+ * @swc-node and other require hooks (which register `.ts`), or a `.ts` entry
+ * file run through a loader or Node's type stripping.
  */
-export function resolveSourceDir(dir: string, isTsNode: boolean): string {
-  if (isTsNode || path.isAbsolute(dir)) return path.resolve(process.cwd(), dir);
-  const segments = path.normalize(dir).split(path.sep);
-  if (segments[0] === "src") segments[0] = "dist";
-  return path.join(process.cwd(), ...segments);
+export function isTypeScriptRuntime(): boolean {
+  if (process.env.TS_NODE_DEV || process.env.TS_NODE_PROJECT) return true;
+  if ((process as any)[Symbol.for("ts-node.register.instance")]) return true;
+  if (typeof require !== "undefined" && require.extensions?.[".ts"]) {
+    return true;
+  }
+  return /\.[cm]?tsx?$/i.test(process.argv[1] ?? "");
+}
+
+/** The source and output folders from the project's tsconfig. */
+export interface SourceLayout {
+  /** `compilerOptions.rootDir`, relative to the project root. */
+  rootDir?: string;
+  /** `compilerOptions.outDir`, relative to the project root. */
+  outDir?: string;
+}
+
+/**
+ * Read `rootDir` / `outDir` from `tsconfig.build.json` (what `megh build`
+ * compiles with) or `tsconfig.json` in `root`, following relative `extends`.
+ * Returns `{}` when there is no readable tsconfig.
+ */
+export function readSourceLayout(root = process.cwd()): SourceLayout {
+  for (const name of ["tsconfig.build.json", "tsconfig.json"]) {
+    const file = path.join(root, name);
+    if (fs.existsSync(file)) return layoutFromConfig(file, root, 0);
+  }
+  return {};
+}
+
+function layoutFromConfig(
+  file: string,
+  root: string,
+  depth: number,
+): SourceLayout {
+  let config: any;
+  try {
+    config = parseJsonc(fs.readFileSync(file, "utf8"));
+  } catch {
+    return {};
+  }
+  const options = config?.compilerOptions ?? {};
+  const dir = path.dirname(file);
+  const rel = (p: unknown) =>
+    typeof p === "string"
+      ? path.relative(root, path.resolve(dir, p)) || "."
+      : undefined;
+  const own: SourceLayout = {
+    rootDir: rel(options.rootDir),
+    outDir: rel(options.outDir),
+  };
+  const parent =
+    typeof config?.extends === "string" ? config.extends : undefined;
+  if (depth < 5 && parent?.startsWith(".")) {
+    const parentFile = path.resolve(
+      dir,
+      parent.endsWith(".json") ? parent : parent + ".json",
+    );
+    if (fs.existsSync(parentFile)) {
+      const inherited = layoutFromConfig(parentFile, root, depth + 1);
+      return {
+        rootDir: own.rootDir ?? inherited.rootDir,
+        outDir: own.outDir ?? inherited.outDir,
+      };
+    }
+  }
+  return own;
+}
+
+/** JSON with comments and trailing commas, as tsconfig allows. */
+function parseJsonc(text: string): unknown {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      out += c;
+      if (c === "\\") out += text[++i] ?? "";
+      else if (c === "\"") inString = false;
+    } else if (c === "\"") {
+      inString = true;
+      out += c;
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      i = text.indexOf("*/", i + 2);
+      if (i === -1) break;
+      i++;
+    } else {
+      out += c;
+    }
+  }
+  return JSON.parse(out.replace(/,(\s*[}\]])/g, "$1"));
+}
+
+/**
+ * Absolute directory for a project-relative source path such as
+ * `src/controllers`. When TypeScript runs directly the path is used as is.
+ * Otherwise the compiled output is read: the tsconfig `rootDir` (default
+ * `src`) is swapped for its `outDir` (default `dist`). When `rootDir` isn't
+ * set, tsc may keep the `src` folder inside `outDir` (`dist/src/...`), so
+ * that is tried too. Only a leading segment changes: a `src` elsewhere in
+ * the path (`app/src/controllers`) is left alone.
+ */
+export function resolveSourceDir(
+  dir: string,
+  isTsNode: boolean,
+  layout: SourceLayout = readSourceLayout(),
+): string {
+  const root = process.cwd();
+  if (isTsNode || path.isAbsolute(dir)) return path.resolve(root, dir);
+  const segments = path
+    .normalize(dir)
+    .split(path.sep)
+    .filter((s) => s !== ".");
+  const rootDir = path.normalize(layout.rootDir ?? "src").split(path.sep);
+  const outDir = path.normalize(layout.outDir ?? "dist");
+  const underRoot =
+    rootDir[0] === "." ||
+    rootDir.every((segment, i) => segments[i] === segment);
+  if (!underRoot) return path.join(root, ...segments);
+
+  const rest = rootDir[0] === "." ? segments : segments.slice(rootDir.length);
+  const candidates = [path.join(root, outDir, ...rest)];
+  if (layout.rootDir === undefined) {
+    // No rootDir: tsc mirrors the common source root, which can keep `src`.
+    candidates.push(path.join(root, outDir, ...segments));
+  }
+  return candidates.find((c) => fs.existsSync(c)) ?? candidates[0];
 }

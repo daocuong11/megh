@@ -164,14 +164,22 @@ const PRIMITIVE_PARAM_TYPES = new Set([
   "object",
 ]);
 
-function resolveParams(s: Store, type: Function): unknown[] {
+function resolveParams(
+  s: Store,
+  type: Function,
+  overrides?: readonly unknown[],
+): unknown[] {
   const api = metadataApi();
-  if (!api) return [];
   const paramTypes =
-    (api.getMetadata("design:paramtypes", type) as unknown[] | undefined) ?? [];
+    (api?.getMetadata("design:paramtypes", type) as unknown[] | undefined) ??
+    [];
+  if (!api) return overrides ? [...overrides] : [];
   const owner = paramOwner(api, type);
+  const count = Math.max(paramTypes.length, overrides?.length ?? 0);
 
-  return paramTypes.map((paramType, index) => {
+  return Array.from({ length: count }, (_, index) => {
+    if (overrides && index < overrides.length) return overrides[index];
+    const paramType = paramTypes[index];
     const handler = s.handlers.find(
       (h) => h.target === owner && h.index === index,
     );
@@ -223,6 +231,27 @@ function resolve(s: Store, id: unknown): unknown {
   entry.value = instance;
   // After the value is stored, so a property factory that resolves this
   // class again gets the instance instead of starting over.
+  applyPropertyHandlers(s, type, instance);
+  return instance;
+}
+
+/**
+ * Build a new `type` without registering it or anything else: constructor
+ * parameter `i` is `overrides[i]` when given, otherwise resolved as usual.
+ * Internal: used by MeghTest so test doubles never leak into the container.
+ */
+export function constructWith<T>(
+  type: Constructable<T>,
+  overrides: readonly unknown[] = [],
+): T {
+  const s = store();
+  s.constructing.push(type);
+  let instance: T;
+  try {
+    instance = new type(...resolveParams(s, type, overrides));
+  } finally {
+    s.constructing.pop();
+  }
   applyPropertyHandlers(s, type, instance);
   return instance;
 }
