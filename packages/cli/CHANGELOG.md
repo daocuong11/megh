@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.5](https://github.com/meghjs/megh/compare/v0.6.3...v0.6.5) (2026-11-17)
+
+### Bug Fixes
+
+* **cli:** alias @meghjs/core decorators that clash with a generated name ([e50bcad](https://github.com/meghjs/megh/commit/e50bcad6c42bade563268325f0a49746a9e0f93b))
+* **cli:** megh doctor requires Node 22, like the packages ([6c3edb5](https://github.com/meghjs/megh/commit/6c3edb5dd8e8edb06b7bcefbc39ce494e1d22bc7)), closes [#101](https://github.com/meghjs/megh/issues/101)
+* **cli:** run built migrations with megh migrate --compiled ([eadf1e7](https://github.com/meghjs/megh/commit/eadf1e71538bec53dfa59ae196128c854f11be0f)), closes [#107](https://github.com/meghjs/megh/issues/107)
+
+### Features
+
+* **cli:** generated unit tests, make:test, make:class and make:model --orm/--typeorm ([11a9ca6](https://github.com/meghjs/megh/commit/11a9ca6fbee8b688a4eb3a3e1968cbb29a03b0fe))
+
+
 ## [0.6.3](https://github.com/meghjs/megh/compare/v0.6.2...v0.6.3) (2026-11-16)
 
 ### Bug Fixes

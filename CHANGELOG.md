@@ -3,6 +3,21 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.5](https://github.com/meghjs/megh/compare/v0.6.3...v0.6.5) (2026-11-17)
+
+### Bug Fixes
+
+* **cli:** alias @meghjs/core decorators that clash with a generated name ([e50bcad](https://github.com/meghjs/megh/commit/e50bcad6c42bade563268325f0a49746a9e0f93b))
+* **cli:** megh doctor requires Node 22, like the packages ([6c3edb5](https://github.com/meghjs/megh/commit/6c3edb5dd8e8edb06b7bcefbc39ce494e1d22bc7)), closes [#101](https://github.com/meghjs/megh/issues/101)
+* **cli:** run built migrations with megh migrate --compiled ([eadf1e7](https://github.com/meghjs/megh/commit/eadf1e71538bec53dfa59ae196128c854f11be0f)), closes [#107](https://github.com/meghjs/megh/issues/107)
+* **core:** fix the core issues from the 1.0 checklist ([c8bf632](https://github.com/meghjs/megh/commit/c8bf63217665f84aa1f9c3da69ee325561e2a20a)), closes [#106](https://github.com/meghjs/megh/issues/106) [#105](https://github.com/meghjs/megh/issues/105) [#104](https://github.com/meghjs/megh/issues/104) [#100](https://github.com/meghjs/megh/issues/100) [#99](https://github.com/meghjs/megh/issues/99) [#98](https://github.com/meghjs/megh/issues/98) [#97](https://github.com/meghjs/megh/issues/97) [#69](https://github.com/meghjs/megh/issues/69) [#55](https://github.com/meghjs/megh/issues/55) [#54](https://github.com/meghjs/megh/issues/54) [#53](https://github.com/meghjs/megh/issues/53) [#52](https://github.com/meghjs/megh/issues/52) [#51](https://github.com/meghjs/megh/issues/51) [#16](https://github.com/meghjs/megh/issues/16) [#106](https://github.com/meghjs/megh/issues/106) [#105](https://github.com/meghjs/megh/issues/105) [#104](https://github.com/meghjs/megh/issues/104) [#100](https://github.com/meghjs/megh/issues/100) [#99](https://github.com/meghjs/megh/issues/99) [#98](https://github.com/meghjs/megh/issues/98) [#97](https://github.com/meghjs/megh/issues/97) [#69](https://github.com/meghjs/megh/issues/69) [#55](https://github.com/meghjs/megh/issues/55) [#54](https://github.com/meghjs/megh/issues/54) [#53](https://github.com/meghjs/megh/issues/53) [#52](https://github.com/meghjs/megh/issues/52) [#51](https://github.com/meghjs/megh/issues/51) [#16](https://github.com/meghjs/megh/issues/16)
+
+### Features
+
+* **cli:** generated unit tests, make:test, make:class and make:model --orm/--typeorm ([11a9ca6](https://github.com/meghjs/megh/commit/11a9ca6fbee8b688a4eb3a3e1968cbb29a03b0fe))
+* **core:** compression, route prefix and versioning, redirects, config schemas, socket auth ([4f5617d](https://github.com/meghjs/megh/commit/4f5617d1376791e0abdb2eb49507db90b60d8cdb)), closes [#59](https://github.com/meghjs/megh/issues/59) [#60](https://github.com/meghjs/megh/issues/60) [#61](https://github.com/meghjs/megh/issues/61) [#62](https://github.com/meghjs/megh/issues/62) [#63](https://github.com/meghjs/megh/issues/63) [#59](https://github.com/meghjs/megh/issues/59) [#60](https://github.com/meghjs/megh/issues/60) [#61](https://github.com/meghjs/megh/issues/61) [#62](https://github.com/meghjs/megh/issues/62) [#63](https://github.com/meghjs/megh/issues/63)
+
+
 ## [0.6.3](https://github.com/meghjs/megh/compare/v0.6.2...v0.6.3) (2026-11-16)
 
 ### Bug Fixes
