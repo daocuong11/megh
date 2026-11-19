@@ -18,8 +18,9 @@ npm run bench   # compile the servers, run all scenarios
 ```
 
 `setup` packs the local `@meghjs/core` and installs the tarball instead of
-linking it, so Megh shares the same single copy of class-validator and
-class-transformer as the other servers. Re-run `setup` after changing core.
+linking it, so the benchmark runs the same package users get from npm and
+shares single copies of its dependencies with the other servers. Re-run `setup`
+after changing core.
 
 Options (environment variables):
 
@@ -44,43 +45,45 @@ Results print to the console and are written to `results.json`.
 - Each scenario gets a 3 s warm-up, then `RUNS` timed runs of `DURATION`
   seconds with [autocannon](https://github.com/mcollina/autocannon). The median
   req/s and p99 latency are reported.
-- Validation: Megh, NestJS and Express use class-validator with
-  `whitelist` + `forbidNonWhitelisted`. Fastify uses its native JSON schema
-  (ajv) with `additionalProperties: false` and `removeAdditional` off, so it
-  rejects unknown properties instead of stripping them.
+- Validation: Megh uses its built-in validator, with the decorators imported
+  from `@meghjs/core` (`src/dto.megh.ts`). NestJS and Express use
+  class-validator with `whitelist` + `forbidNonWhitelisted` (`src/dto.ts`).
+  Fastify uses its native JSON schema (ajv) with `additionalProperties: false`
+  and `removeAdditional` off. All of them reject unknown properties with 400
+  instead of stripping them.
 
 Versions are pinned in `package.json`: Fastify 5.12.8, Express 5.3.0,
 NestJS 12.4.2, class-validator 0.15.1, autocannon 9.0.0.
 
 ## Results
 
-2026-11-11, Megh 0.5.4 (`main`), Node 24.14.0, Windows 11, Intel i5-11320H
+2026-11-19, Megh 0.6.5 (`main`), Node 24.14.0, Windows 11, Intel i5-11320H
 (4 cores / 8 threads), 100 connections, 3 × 10 s, median req/s:
 
 | Server           |       JSON |     Params | Validated body |
 | ---------------- | ---------: | ---------: | -------------: |
-| Fastify (raw)    |     20,607 |     20,412 |         16,375 |
-| **Megh**         | **19,073** | **17,656** |      **8,951** |
-| NestJS + Fastify |     17,683 |     16,437 |          8,785 |
-| Express          |     12,761 |     11,987 |          7,681 |
-| NestJS + Express |     12,075 |     10,180 |          6,822 |
+| Fastify (raw)    |     18,075 |     18,907 |         14,510 |
+| **Megh**         | **16,703** | **15,879** |     **11,725** |
+| NestJS + Fastify |     15,934 |     14,160 |          8,102 |
+| Express          |     11,674 |     10,533 |          7,035 |
+| NestJS + Express |     10,425 |      8,916 |          6,059 |
 
-p99 latency for Megh: 8 ms, 9 ms and 16 ms. No errors or non-2xx responses in
-any run.
-
-The Megh params row was measured with `id: number`. `id: string` returned 400
-until the `autoCast` fix that landed with this folder; the fix adds no cost to
-that path.
+p99 latency for Megh: 11 ms, 13 ms and 15 ms (Fastify: 10, 9 and 13 ms). No
+errors or non-2xx responses in any run.
 
 ### Reading the numbers
 
-- On simple routes Megh keeps 86–93% of raw Fastify's throughput and is ahead
-  of NestJS on Fastify by about 8%.
-- With a validated body, Megh and NestJS are level (both pay for
-  class-validator) at about 55% of Fastify's compiled JSON-schema validation.
-  This is where Megh's speed is spent, and the clearest optimization target:
-  Megh already builds a JSON schema from each DTO for OpenAPI.
+- On simple routes Megh keeps 84–92% of raw Fastify's throughput and is ahead
+  of NestJS on Fastify by 5–12%.
+- With a validated body, Megh now keeps 81% of Fastify's compiled JSON-schema
+  validation and is about 45% ahead of NestJS on Fastify. In the 0.5.4 run,
+  when Megh still used class-validator, it was level with NestJS at about 55%
+  of Fastify. The gain comes from Megh's built-in validator.
 - Express-based servers trail on every route.
+
+This run was slower across the board than the 0.5.4 run (raw Fastify dropped
+about 12%), so compare the ratios between servers, not absolute req/s across
+runs.
 
 Laptop numbers are noisy: background load and thermal throttling can easily
 move results by 2×. Compare servers within one run, not across runs. Before
