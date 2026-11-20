@@ -1,0 +1,127 @@
+{
+  "Echo": {
+    "prefix": "{{",
+    "body": "{{ ${1:value} }}",
+    "description": "Print an escaped value"
+  },
+  "Raw echo": {
+    "prefix": "{!!",
+    "body": "{!! ${1:html} !!}",
+    "description": "Print a value without escaping (trusted HTML only)"
+  },
+  "Comment": {
+    "prefix": "{{--",
+    "body": "{{-- ${1:comment} --}}",
+    "description": "Template comment, not sent to the browser"
+  },
+  "@if": {
+    "prefix": "@if",
+    "body": ["@if(${1:condition})", "\t$0", "@endif"]
+  },
+  "@if @else": {
+    "prefix": "@ifelse",
+    "body": ["@if(${1:condition})", "\t$2", "@else", "\t$0", "@endif"]
+  },
+  "@unless": {
+    "prefix": "@unless",
+    "body": ["@unless(${1:condition})", "\t$0", "@endunless"]
+  },
+  "@isset": {
+    "prefix": "@isset",
+    "body": ["@isset(${1:value})", "\t$0", "@endisset"]
+  },
+  "@foreach": {
+    "prefix": "@foreach",
+    "body": ["@foreach(${1:items} as ${2:item})", "\t$0", "@endforeach"],
+    "description": "Loop; `loop.index`, `loop.first`, `loop.last` are available inside"
+  },
+  "@for": {
+    "prefix": "@for",
+    "body": ["@for(let ${1:i} = 0; $1 < ${2:n}; $1++)", "\t$0", "@endfor"]
+  },
+  "@while": {
+    "prefix": "@while",
+    "body": ["@while(${1:condition})", "\t$0", "@endwhile"]
+  },
+  "@extends": {
+    "prefix": "@extends",
+    "body": ["@extends('${1:layouts.app}')", "", "@section('title', '${2:Title}')", "", "@section('content')", "\t$0", "@endsection"],
+    "description": "Page that fills a layout"
+  },
+  "@section": {
+    "prefix": "@section",
+    "body": ["@section('${1:content}')", "\t$0", "@endsection"]
+  },
+  "@yield": {
+    "prefix": "@yield",
+    "body": "@yield('${1:content}')"
+  },
+  "@include": {
+    "prefix": "@include",
+    "body": "@include('${1:partials.name}')"
+  },
+  "@push": {
+    "prefix": "@push",
+    "body": ["@push('${1:scripts}')", "\t$0", "@endpush"]
+  },
+  "@stack": {
+    "prefix": "@stack",
+    "body": "@stack('${1:scripts}')"
+  },
+  "@json": {
+    "prefix": "@json",
+    "body": "@json(${1:value})",
+    "description": "Value as JSON, safe inside <script>"
+  },
+  "@react": {
+    "prefix": "@react",
+    "body": [
+      "@react({ ${1:props} })",
+      "export default function ${2:Island}(props) {",
+      "\treturn ${0:<div />};",
+      "}",
+      "@endreact"
+    ],
+    "description": "React island compiled on the server, mounted in the browser"
+  },
+  "Component tag": {
+    "prefix": "<x-",
+    "body": "<x-${1:alert} ${2:type=\"info\"}>$0</x-$1>"
+  },
+  "Form": {
+    "prefix": "form:megh",
+    "body": [
+      "<form method=\"post\" action=\"${1:/todos}\">",
+      "\t@csrf",
+      "\t$0",
+      "\t<button type=\"submit\">${2:Save}</button>",
+      "</form>"
+    ],
+    "description": "POST form with @csrf"
+  },
+  "Form with method override": {
+    "prefix": "form:method",
+    "body": [
+      "<form method=\"post\" action=\"/todos/{{ ${1:todo.id} }}\">",
+      "\t@csrf",
+      "\t@method('${2|PUT,PATCH,DELETE|}')",
+      "\t$0",
+      "\t<button type=\"submit\">${3:Save}</button>",
+      "</form>"
+    ],
+    "description": "PUT/PATCH/DELETE form; needs app.useMethodOverride()"
+  },
+  "Upload form": {
+    "prefix": "form:upload",
+    "body": [
+      "<form method=\"post\" action=\"${1:/todos}\" enctype=\"multipart/form-data\">",
+      "\t@csrf",
+      "\t${2:@method('PUT')}",
+      "\t$0",
+      "\t<input name=\"${3:photo}\" type=\"file\" accept=\"${4:image/*}\">",
+      "\t<button type=\"submit\">${5:Upload}</button>",
+      "</form>"
+    ],
+    "description": "Multipart form; keep @method before file inputs"
+  }
+}

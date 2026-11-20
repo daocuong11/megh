@@ -1,0 +1,120 @@
+{
+  "name": "megh-templates",
+  "displayName": "Megh Templates",
+  "description": "Highlighting, completion (HTML, components, view variables), hover, formatting and validation for Megh view templates (.megh.html).",
+  "version": "0.1.0",
+  "publisher": "meghjs",
+  "author": "Tareq Hossain",
+  "license": "MIT",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meghjs/meghjs",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Formatters",
+    "Linters"
+  ],
+  "keywords": [
+    "megh",
+    "meghjs",
+    "template",
+    "views",
+    "blade",
+    "html",
+    "completion"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "megh",
+        "aliases": [
+          "Megh Template",
+          "megh"
+        ],
+        "filenamePatterns": [
+          "*.megh.html"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/megh-light.svg",
+          "dark": "./icons/megh-dark.svg"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "megh",
+        "scopeName": "text.html.megh",
+        "path": "./syntaxes/megh.tmLanguage.json",
+        "embeddedLanguages": {
+          "text.html": "html",
+          "source.css": "css",
+          "source.js": "javascript",
+          "meta.embedded.megh.expression": "javascript",
+          "meta.embedded.megh.arguments": "javascript",
+          "meta.embedded.megh.block.js": "javascript",
+          "meta.embedded.megh.block.jsx": "javascriptreact"
+        }
+      },
+      {
+        "scopeName": "text.html.megh.injection",
+        "path": "./syntaxes/megh.injection.tmLanguage.json",
+        "injectTo": [
+          "text.html.megh"
+        ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "megh",
+        "path": "./snippets/megh.code-snippets"
+      }
+    ],
+    "configuration": {
+      "title": "Megh Templates",
+      "properties": {
+        "megh.autoClosingTags": {
+          "type": "boolean",
+          "default": true,
+          "description": "Insert the closing tag after typing > or / in a .megh.html file, like the HTML editor does."
+        },
+        "megh.validate.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Report problems in .megh.html files: unclosed or mismatched @if/@foreach/... blocks and unclosed {{ }}."
+        },
+        "megh.validate.html": {
+          "type": "boolean",
+          "default": true,
+          "description": "Also report HTML problems: unclosed and stray tags, duplicate attributes, <x-...> tags with no component file."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "npm run build:grammar && esbuild src/extension.ts --bundle --platform=node --main-fields=module,main --format=cjs --external:vscode --outfile=dist/extension.js --minify --sourcemap",
+    "build:grammar": "node scripts/build-grammar.mjs",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "esbuild test/*.test.ts --bundle --platform=node --main-fields=module,main --format=cjs --outdir=out --log-level=warning && node --test \"out/*.test.js\"",
+    "package": "npm run build && npx @vscode/vsce@3 package --no-dependencies"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.75.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.7.2",
+    "vscode-html-languageservice": "^5.3.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:megh"
+  ]
+}
