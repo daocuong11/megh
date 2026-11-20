@@ -33,6 +33,7 @@ import { applyQueryParamExtensions } from "../openapi/query-params";
 import { swaggerUiBranding } from "../openapi/branding";
 import { OpenApiUiOptions } from "../openapi/openapi";
 import { MeghMiddleware } from "../http/middleware";
+import { installMethodOverride } from "../http/method-override";
 import { MeghScheduler } from "../scheduler";
 import { isScheduledTask } from "../scheduler/schedule-registry";
 import { isApiController } from "../common/container";
@@ -132,6 +133,7 @@ export class MeghApplication implements IMeghApplication {
   private usesMail = false;
   private usesSecurityHeaders = false;
   private usesCompression = false;
+  private usesMethodOverride = false;
   private envSchemas: Constructor<object>[] = [];
   private rateLimitOptions: RateLimitOptions | undefined;
   /** The rate limit store Megh created, closed on shutdown. */
@@ -625,6 +627,30 @@ export class MeghApplication implements IMeghApplication {
   }
 
   /**
+   * Let HTML forms send PUT, PATCH and DELETE. The form POSTs with a hidden
+   * `_method` field, which `@method('PUT')` renders in a view, and the
+   * request goes to the route for that method:
+   *
+   *   <form method="post" action="/todos/1">
+   *     @method('DELETE')
+   *     <button>Delete</button>
+   *   </form>
+   *
+   * Only urlencoded form POSTs are rerouted. Also parses
+   * `application/x-www-form-urlencoded` bodies for `@Body()`, unless a parser
+   * for that type is already registered.
+   */
+  useMethodOverride() {
+    this.assertNotStarted("useMethodOverride");
+    if (this.usesMethodOverride) {
+      throw new SystemUseError("[Megh] useMethodOverride() is already on.");
+    }
+    this.usesMethodOverride = true;
+    installMethodOverride(this.app);
+    return this;
+  }
+
+  /**
    * Put `prefix` in front of every controller and inline route:
    * `setGlobalPrefix('/api')` serves `@Get('/users')` at `/api/users`.
    * Health routes and the API docs page keep their own paths; `exclude`
@@ -678,6 +704,7 @@ export class MeghApplication implements IMeghApplication {
     if (options.multipart) this.useMultipart(options.multipart);
     if (options.staticFiles) this.useStaticFiles(options.staticFiles);
     if (options.views) this.useViews(options.views);
+    if (options.methodOverride) this.useMethodOverride();
     if (options.compression)
       this.useCompression(
         options.compression === true ? {} : options.compression,

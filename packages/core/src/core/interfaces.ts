@@ -67,6 +67,8 @@ export type GlobalOptions = {
   scheduler?: Constructor[] | SchedulerScanOptions;
   /** `true` or options for `useCompression()`. */
   compression?: boolean | CompressionOptions;
+  /** `true` to call `useMethodOverride()`. */
+  methodOverride?: boolean;
 };
 
 /**
@@ -175,6 +177,8 @@ export interface IMeghApplication {
   useViews: (options?: ViewEngineOptions | ViewEngine) => this;
   /** Compress responses with `@fastify/compress`. */
   useCompression: (options?: CompressionOptions) => this;
+  /** Route form POSTs with `_method=PUT|PATCH|DELETE` as that method. */
+  useMethodOverride: () => this;
   /** Put a prefix such as `/api` in front of every controller and inline route. */
   setGlobalPrefix: (
     prefix: string,

@@ -8,5 +8,6 @@ export * from "./results";
 export * from "./validation";
 export * from "./validator-extend";
 export * from "./map-types";
+export { parseForm, OVERRIDABLE_METHODS } from "./method-override";
 export { Version } from "./versioning";
 export type { VersioningOptions } from "./versioning";
