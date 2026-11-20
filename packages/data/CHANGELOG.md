@@ -3,6 +3,88 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.6.5](https://github.com/meghjs/megh/compare/v0.6.3...v0.6.5) (2026-11-17)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.6.3](https://github.com/meghjs/megh/compare/v0.6.2...v0.6.3) (2026-11-16)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.6.2](https://github.com/meghjs/megh/compare/v0.6.1...v0.6.2) (2026-11-16)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.6.1](https://github.com/meghjs/megh/compare/v0.6.0...v0.6.1) (2026-11-16)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+
+# [0.6.0](https://github.com/meghjs/megh/compare/v0.5.5...v0.6.0) (2026-11-12)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.5.5](https://github.com/meghjs/megh/compare/v0.5.4...v0.5.5) (2026-11-12)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+
+## [0.5.4](https://github.com/meghjs/megh/compare/v0.5.3...v0.5.4) (2026-11-09)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.5.3](https://github.com/meghjs/megh/compare/v0.5.2...v0.5.3) (2026-11-08)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.5.2](https://github.com/meghjs/megh/compare/v0.5.1...v0.5.2) (2026-11-08)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
+## [0.5.1](https://github.com/meghjs/megh/compare/v0.5.0...v0.5.1) (2026-11-08)
+
+**Note:** Version bump only for package @meghjs/data
+
+
+
+
+
 # [0.5.0](https://github.com/meghjs/megh/compare/v0.4.1...v0.5.0) (2026-11-01)
 
 * refactor!: rename Avleon to Megh ([e4239e0](https://github.com/meghjs/megh/commit/e4239e0b838b78115df655ccf8a25a5cb4c0c27a)), closes [megh-env](https://github.com/me/issues/env) [x-megh-request-body](https://github.com/x-me/issues/request-body)

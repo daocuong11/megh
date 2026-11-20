@@ -68,8 +68,16 @@ describe("make:resource from a migration", () => {
       "src/dtos/user.dto.ts",
       "src/services/user.service.ts",
       "src/controllers/user.controller.ts",
+      "src/services/user.service.spec.ts",
+      "src/controllers/user.controller.spec.ts",
     ]);
-    expect(read("src", "models", "user.model.ts")).toContain('static readonly table = "users";');
+    expect(read("src", "models", "user.model.ts")).toContain('@Table("users")');
+  });
+
+  it("writes no tests with notest", () => {
+    const files = makeResource("user", { cwd: tmp, notest: true });
+    expect(files.some((f) => f.endsWith(".spec.ts"))).toBe(false);
+    expect(fs.existsSync(path.join(tmp, "src", "services", "user.service.spec.ts"))).toBe(false);
   });
 
   it("validates the writable columns in the DTOs", () => {
@@ -108,9 +116,30 @@ describe("make:resource from a migration", () => {
     expect(ctrl).toContain("@ApiController('/users')");
     expect(ctrl).toContain("index(@Query() query: ListUsersQuery)");
     expect(ctrl).toContain("create(@Body() body: CreateUserDto)");
-    expect(ctrl).toContain("@Put('/:id')\n  update(@Param('id') id: number, @Body() body: UpdateUserDto)");
+    expect(ctrl).toContain(
+      "@Put('/:id')\n  @ApiResponse(200, User)\n  @ApiResponse(404)\n  update(@Param('id') id: number, @Body() body: UpdateUserDto)",
+    );
+    // Responses are documented with the model, a page of it, and findOrFail()'s 404.
+    expect(ctrl).toContain("import { User } from '../models/user.model';");
+    expect(ctrl).toContain("@Get()\n  @ApiResponse(200, Paginated(User))\n  index(");
     expect(ctrl).toContain("this.userService.findOrFail(Number(id))");
     expect(ctrl).not.toContain("@Patch");
+  });
+
+  it("documents the service class and every method with JSDoc", () => {
+    makeResource("user", { cwd: tmp });
+    const service = read("src", "services", "user.service.ts");
+    expect(service).toMatch(/\/\*\*\n \* Reads and writes User rows[\s\S]*?@example[\s\S]*?\*\/\n@AppService\nexport class UserService/);
+    for (const method of ["findAll()", "paginate(", "find(", "findOrFail(", "create(", "async update(", "async delete("]) {
+      const at = service.indexOf(`\n  ${method}`);
+      expect(at, method).toBeGreaterThan(-1);
+      // The method is directly preceded by a JSDoc block.
+      expect(service.slice(0, at).trimEnd().endsWith("*/"), method).toBe(true);
+    }
+    expect(service).toContain("@param id - The `id` to look up.");
+    expect(service.match(/@throws NotFoundException/g)).toHaveLength(3); // findOrFail, update, delete
+    expect(service).toContain("{@link UserService.paginate}");
+    expect(service).not.toMatch(/\{(ClassName|Model|modelVar|modelImport|primaryKey|primaryKeyType)\}/);
   });
 
   it("supports nested names and irregular plurals", () => {
@@ -121,15 +150,42 @@ describe("make:resource from a migration", () => {
 }`,
     );
     makeResource("admin/Category", { cwd: tmp });
-    const ctrl = read("src", "controllers", "admin", "category.controller.ts");
+    // The module folder comes first: src/admin/{models,services,controllers,dtos}/.
+    const ctrl = read("src", "admin", "controllers", "category.controller.ts");
     expect(ctrl).toContain("@ApiController('/admin/categories')");
-    expect(ctrl).toContain("from '../../dtos/admin/category.dto'");
-    expect(read("src", "dtos", "admin", "category.dto.ts")).toContain("class ListCategoriesQuery");
+    expect(ctrl).toContain("from '../dtos/category.dto'");
+    expect(ctrl).toContain("from '../services/category.service'");
+    expect(read("src", "admin", "dtos", "category.dto.ts")).toContain("class ListCategoriesQuery");
+    expect(exists("src", "admin", "models", "category.model.ts")).toBe(true);
+    expect(exists("src", "controllers")).toBe(false);
+  });
+
+  it("finds a model in the pre-0.6.2 location (src/models/admin/)", () => {
+    writeFile(
+      "src/database/migrations/20260102000000_create_categories_table.ts",
+      `export async function up(db) {
+  await db.schema.createTable("categories").addColumn("id", "integer", (c) => c.primaryKey()).addColumn("name", "text").execute();
+}`,
+    );
+    writeFile(
+      "src/models/admin/category.model.ts",
+      `import { Column, Model, Table } from "@meghjs/core";
+@Table("categories")
+export class Category extends Model {
+  @Column() declare id: number;
+  @Column() declare name: string;
+}
+`,
+    );
+    makeResource("admin/Category", { cwd: tmp });
+    const service = read("src", "admin", "services", "category.service.ts");
+    expect(service).toContain("from '../../models/admin/category.model'");
+    expect(exists("src", "admin", "models", "category.model.ts")).toBe(false);
   });
 
   it("reads another table with --table", () => {
     makeResource("member", { cwd: tmp, table: "users" });
-    expect(read("src", "models", "member.model.ts")).toContain('static readonly table = "users";');
+    expect(read("src", "models", "member.model.ts")).toContain('@Table("users")');
     expect(read("src", "dtos", "member.dto.ts")).toContain("email!: string;");
   });
 
@@ -235,6 +291,35 @@ export class Order {
 });
 
 describe("readModelSchema", () => {
+  it("reads a model described with decorators", () => {
+    const schema = readModelSchema(`import { Model, Table, Column, PrimaryKey, AutoIncrement, CreatedAt, HasMany } from "@meghjs/core";
+
+@Table("orders")
+export class Order extends Model {
+  @PrimaryKey() @AutoIncrement() id?: number;
+  @Column() customer_id!: number;
+  @Column({ nullable: true }) note!: string | null;
+  @Column({
+    type: "decimal",
+    cast: "number",
+  })
+  total!: number;
+  @Column({ default: "new" }) status?: string;
+  @CreatedAt() created_at?: Date;
+
+  @HasMany(() => Line) lines!: HasMany<Line>;
+  private cache!: string;
+  scratch!: string;
+}`);
+    expect(schema).toMatchObject({ kind: "megh", table: "orders", primaryKey: "id", primaryKeyType: "number" });
+    expect(schema.inputFields).toEqual([
+      { name: "customer_id", ts: "number", nullable: false, generated: false },
+      { name: "note", ts: "string", nullable: true, generated: false },
+      { name: "total", ts: "number", nullable: false, generated: false },
+      { name: "status", ts: "string", nullable: false, generated: true },
+    ]);
+  });
+
   it("reads TypeORM columns, with multi-line decorators", () => {
     const schema = readModelSchema(`@Entity('orders')
 export class Order {

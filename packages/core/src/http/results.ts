@@ -96,6 +96,23 @@ export class OkStream extends HttpResult<Readable> {
   }
 }
 
+/** A redirect: `Location: url` with a 3xx status (302 unless given). */
+export class RedirectResult extends HttpResult<undefined> {
+  readonly body = undefined;
+  constructor(
+    public readonly url: string,
+    public readonly statusCode: number = 302,
+  ) {
+    super();
+    if (!Number.isInteger(statusCode) || statusCode < 300 || statusCode > 399) {
+      throw new Error(
+        `[Megh] Results.Redirect expects a 3xx status code, got ${statusCode}.`,
+      );
+    }
+    this.headers.location = url;
+  }
+}
+
 /**
  * Factory helpers for route results. Each one sets the status code:
  *
@@ -103,6 +120,7 @@ export class OkStream extends HttpResult<Readable> {
  *   return Results.Created(user);     // 201 { data: user }
  *   return Results.NoContent();       // 204, empty body
  *   return Results.NotFound("nope");  // 404 { code, status, message }
+ *   return Results.Redirect("/login");  // 302 Location: /login
  *   return Results.OkStream(stream, { contentType: "text/csv" });
  *   return Results.View("pages.home", { user });  // text/html
  */
@@ -129,6 +147,10 @@ export class Results {
     statusCode?: number,
   ): ViewResult {
     return new ViewResult(name, data, statusCode);
+  }
+  /** Redirect to `url`: 302 by default, or `statusCode` (301, 303, 307, 308). */
+  static Redirect(url: string, statusCode = 302): RedirectResult {
+    return new RedirectResult(url, statusCode);
   }
 }
 

@@ -1,0 +1,20 @@
+import { describe, expect, it } from 'vitest';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  const mail = new {ClassName}();
+
+  it('has a subject', () => {
+    expect(mail.envelope()).toEqual({ subject: '{Title}' });
+  });
+
+  it('has an HTML and a text body', () => {
+    const content = mail.content();
+    expect(content.html).toContain('{Title}');
+    expect(content.text).toContain('{Title}');
+  });
+
+  it('has no attachments', () => {
+    expect(mail.attachments()).toEqual([]);
+  });
+});

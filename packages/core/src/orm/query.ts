@@ -10,15 +10,17 @@ import type {
   ExpressionBuilder,
   SqlBool,
 } from "kysely";
-import { BadRequestException, NotFoundException } from "../common/exceptions";
+import { BadRequestException, NotFoundException } from "./core";
 import {
   normalizePageRequest,
   paginated,
   type PageRequest,
   type Paginated,
-} from "../collection/pagination";
+} from "./core";
 import { bindable, castFromDatabase, castToDatabase, isSqlite } from "./casts";
 import { getConnection } from "./connection";
+import { applyPaging } from "./paging";
+import { columnName, propertyName, toColumns } from "./naming";
 import { getRelation, type RelationDefinition } from "./relations";
 import { hydrate, tableOf, withTimestamps } from "./state";
 import type {
@@ -185,13 +187,13 @@ export class ModelQuery<
       this.filters.push((qb) => qb.where(column));
     } else if (arguments.length === 2) {
       const op = opOrValue === null ? "is" : "=";
-      this.filters.push((qb, { bind }) =>
-        qb.where(column, op, bind(opOrValue)),
-      );
+      const name = this.col(column as string);
+      this.filters.push((qb, { bind }) => qb.where(name, op, bind(opOrValue)));
     } else {
+      const name = this.col(column as string);
       this.filters.push((qb, { bind }) =>
         qb.where(
-          column,
+          name,
           opOrValue,
           Array.isArray(value) ? value.map(bind) : bind(value),
         ),
@@ -208,7 +210,7 @@ export class ModelQuery<
     this.filters.push((qb, { bind }) =>
       values.length === 0
         ? qb.where((eb: any) => eb(eb.lit(1), "=", eb.lit(0)))
-        : qb.where(column, "in", values.map(bind)),
+        : qb.where(this.col(column), "in", values.map(bind)),
     );
     return this;
   }
@@ -219,19 +221,19 @@ export class ModelQuery<
   ): this {
     if (values.length > 0) {
       this.filters.push((qb, { bind }) =>
-        qb.where(column, "not in", values.map(bind)),
+        qb.where(this.col(column), "not in", values.map(bind)),
       );
     }
     return this;
   }
 
   whereNull(column: keyof Columns<M> & string): this {
-    this.filters.push((qb) => qb.where(column, "is", null));
+    this.filters.push((qb) => qb.where(this.col(column), "is", null));
     return this;
   }
 
   whereNotNull(column: keyof Columns<M> & string): this {
-    this.filters.push((qb) => qb.where(column, "is not", null));
+    this.filters.push((qb) => qb.where(this.col(column), "is not", null));
     return this;
   }
 
@@ -311,7 +313,7 @@ export class ModelQuery<
     column: keyof Columns<M> & string,
     direction: "asc" | "desc" = "asc",
   ): this {
-    this.ordering.push((qb) => qb.orderBy(column, direction));
+    this.ordering.push((qb) => qb.orderBy(this.col(column), direction));
     return this;
   }
 
@@ -356,10 +358,8 @@ export class ModelQuery<
 
   async get(): Promise<(Row<M, P, S> & X)[]> {
     const ctx = this.context();
-    let qb = this.applyFilters(
-      getConnection().selectFrom(tableOf(this.model)),
-      ctx,
-    );
+    const db = getConnection();
+    let qb = this.applyFilters(db.selectFrom(tableOf(this.model)), ctx);
     const columns = this.selectedColumns();
     qb = columns ? qb.select(columns) : qb.selectAll();
     for (const { relation, constrain } of this.counts) {
@@ -371,12 +371,11 @@ export class ModelQuery<
       );
     }
     for (const step of this.ordering) qb = step(qb, ctx);
-    if (this.limitCount !== undefined) qb = qb.limit(this.limitCount);
-    if (this.offsetCount !== undefined) {
-      // SQLite and MySQL need a LIMIT before OFFSET.
-      if (this.limitCount === undefined) qb = qb.limit(Number.MAX_SAFE_INTEGER);
-      qb = qb.offset(this.offsetCount);
-    }
+    qb = applyPaging(db, qb, {
+      limit: this.limitCount,
+      offset: this.offsetCount,
+      ordered: this.ordering.length > 0,
+    });
 
     const rows: Record<string, unknown>[] = await qb.execute();
     const models = rows.map((row) => {
@@ -480,10 +479,14 @@ export class ModelQuery<
     if (request.cursor) {
       const after = decodeCursor(request.cursor);
       query.filters.push((qb, { bind }) =>
-        qb.where(column, direction === "asc" ? ">" : "<", bind(after)),
+        qb.where(
+          this.col(column),
+          direction === "asc" ? ">" : "<",
+          bind(after),
+        ),
       );
     }
-    query.ordering.unshift((qb) => qb.orderBy(column, direction));
+    query.ordering.unshift((qb) => qb.orderBy(this.col(column), direction));
     if (query.selected && !query.selected.includes(column)) {
       query.selected.push(column);
     }
@@ -539,7 +542,7 @@ export class ModelQuery<
     const result = await this.applyFilters(
       getConnection().selectFrom(tableOf(this.model)),
     )
-      .select((eb: any) => eb.fn[fn](column).as("aggregate"))
+      .select((eb: any) => eb.fn[fn](this.col(column)).as("aggregate"))
       .executeTakeFirst();
     return result?.aggregate ?? null;
   }
@@ -555,10 +558,13 @@ export class ModelQuery<
    */
   async update(values: UpdateInput<M>): Promise<number> {
     const db = getConnection();
-    const data = castToDatabase(
+    const data = toColumns(
       this.model,
-      withTimestamps(this.model, values as Record<string, unknown>, "update"),
-      db,
+      castToDatabase(
+        this.model,
+        withTimestamps(this.model, values as Record<string, unknown>, "update"),
+        db,
+      ),
     );
     const result = await this.applyFilters(
       db.updateTable(tableOf(this.model)).set(data),
@@ -606,6 +612,11 @@ export class ModelQuery<
     return copy;
   }
 
+  /** The column for a property of this query's model. */
+  private col(name: string): string {
+    return columnName(this.model, name);
+  }
+
   private context(): BuildContext {
     const sqlite = isSqlite(getConnection());
     return {
@@ -619,7 +630,7 @@ export class ModelQuery<
     for (const step of this.filters) qb = step(qb, ctx);
     if (this.model.softDeletes && this.trashed !== "with") {
       qb = qb.where(
-        this.model.deletedAt,
+        this.col(this.model.deletedAt),
         this.trashed === "only" ? "is not" : "is",
         null,
       );
@@ -654,7 +665,7 @@ export class ModelQuery<
         .whereRef(
           `${pivotAlias}.${def.foreignKey}`,
           "=",
-          `${outer.ref}.${def.localKey}`,
+          `${outer.ref}.${this.col(def.localKey)}`,
         );
       if (query.filters.length > 0 || related.softDeletes) {
         // A separate subquery keeps unqualified columns in `constrain`
@@ -662,7 +673,7 @@ export class ModelQuery<
         const keys = query.applyFilters(
           db
             .selectFrom(`${tableOf(related)} as ${alias}`)
-            .select(`${alias}.${pivot.relatedKey}`),
+            .select(`${alias}.${columnName(related, pivot.relatedKey)}`),
           inner,
         );
         qb = qb.where(`${pivotAlias}.${pivot.relatedPivotKey}`, "in", keys);
@@ -679,7 +690,11 @@ export class ModelQuery<
     return query.applyFilters(
       db
         .selectFrom(`${tableOf(related)} as ${alias}`)
-        .whereRef(`${alias}.${relatedKey}`, "=", `${outer.ref}.${outerKey}`),
+        .whereRef(
+          `${alias}.${columnName(related, relatedKey)}`,
+          "=",
+          `${outer.ref}.${this.col(outerKey)}`,
+        ),
       inner,
     );
   }
@@ -687,11 +702,13 @@ export class ModelQuery<
   /** Selected columns plus the keys eager loading needs, or `undefined` for all. */
   private selectedColumns(): string[] | undefined {
     if (!this.selected) return undefined;
-    const columns = new Set(this.selected);
-    columns.add(this.model.primaryKey);
+    const columns = new Set(this.selected.map((c) => this.col(c)));
+    columns.add(this.col(this.model.primaryKey));
     for (const path of this.eager) {
       const def = getRelation(this.model, path.split(".")[0]);
-      columns.add(def.kind === "belongsTo" ? def.foreignKey : def.localKey);
+      columns.add(
+        this.col(def.kind === "belongsTo" ? def.foreignKey : def.localKey),
+      );
     }
     return [...columns];
   }
@@ -730,10 +747,12 @@ async function eagerLoad(
         ? [def.foreignKey, def.localKey]
         : [def.localKey, def.foreignKey];
 
+    const parentProp = propertyName(cls, parentKey);
+    const relatedProp = propertyName(related, relatedKey);
     const keys = [
       ...new Set(
         parents
-          .map((p) => p[parentKey])
+          .map((p) => p[parentProp])
           .filter((k) => k !== null && k !== undefined),
       ),
     ];
@@ -747,12 +766,12 @@ async function eagerLoad(
 
     const groups = new Map<unknown, any[]>();
     for (const child of children) {
-      const key = child[relatedKey];
+      const key = child[relatedProp];
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(child);
     }
     for (const parent of parents) {
-      const matches = groups.get(parent[parentKey]) ?? [];
+      const matches = groups.get(parent[parentProp]) ?? [];
       parent[name] = def.kind === "hasMany" ? matches : (matches[0] ?? null);
     }
   }
@@ -769,10 +788,13 @@ export async function loadBelongsToMany(
   nested: string[],
 ): Promise<void> {
   const pivot = def.pivot!;
+  // Plain objects (PivotRelation.get) have no mapping, so the key is read as is.
+  const owner: Function = parents[0]?.constructor ?? Object;
+  const localProp = propertyName(owner, def.localKey);
   const keys = [
     ...new Set(
       parents
-        .map((p) => p[def.localKey])
+        .map((p) => p[localProp])
         .filter((k) => k !== null && k !== undefined),
     ),
   ];
@@ -788,7 +810,7 @@ export async function loadBelongsToMany(
       .innerJoin(
         pivot.table,
         `${pivot.table}.${pivot.relatedPivotKey}`,
-        `${table}.${pivot.relatedKey}`,
+        `${table}.${columnName(related, pivot.relatedKey)}`,
       )
       .selectAll(table)
       .select(
@@ -796,7 +818,11 @@ export async function loadBelongsToMany(
       )
       .where(`${pivot.table}.${def.foreignKey}`, "in", keys);
     if (related.softDeletes) {
-      qb = qb.where(`${table}.${related.deletedAt}`, "is", null);
+      qb = qb.where(
+        `${table}.${columnName(related, related.deletedAt)}`,
+        "is",
+        null,
+      );
     }
     rows = await qb.execute();
   }
@@ -824,7 +850,7 @@ export async function loadBelongsToMany(
     groups.get(key)!.push(child);
   }
   for (const parent of parents) {
-    parent[name] = groups.get(parent[def.localKey]) ?? [];
+    parent[name] = groups.get(parent[localProp]) ?? [];
   }
 }
 

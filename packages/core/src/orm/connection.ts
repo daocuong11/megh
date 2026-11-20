@@ -5,13 +5,13 @@
  * @url https://github.com/xtareq
  *
  * The ORM's Kysely connection, and the transaction the current async call
- * chain runs in. Only Kysely's types are imported: the app passes its own
- * Kysely instance, so core never loads Kysely itself.
+ * chain runs in. Kysely is the engine under the ORM: apps configure the
+ * connection with `app.useMeghORM()` and never create it themselves.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Kysely, Transaction } from "kysely";
-import { Container, Token } from "../di";
-import { loadPackageFromClient } from "../common/utils/common-utils";
+import { Container, Token } from "./core";
+import { kysely } from "./engine";
 import { usesAdapter } from "./casts";
 
 /** DI token holding the ORM's root Kysely instance. */
@@ -26,11 +26,29 @@ export function setConnection(db: Kysely<any>) {
 function rootConnection(): Kysely<any> {
   if (!Container.has(ORM_CONNECTION)) {
     throw new Error(
-      "[Megh ORM] No database connection. Call app.useDatabase(kysely) " +
-        "(or Model.useConnection(kysely) outside an app) first.",
+      "[Megh ORM] No database connection. Call app.useMeghORM() " +
+        "(or Model.useConnection(db) outside an app) first.",
     );
   }
   return Container.get(ORM_CONNECTION);
+}
+
+/** Whether a root connection is set. */
+export function hasConnection(): boolean {
+  return Container.has(ORM_CONNECTION);
+}
+
+/**
+ * Run `fn` in a transaction on `db`, which every model query in the call
+ * chain uses, like {@link runInTransaction} but on a given connection.
+ */
+export function transactionOn<T>(
+  db: Kysely<any>,
+  fn: (trx: Transaction<any>) => Promise<T>,
+): Promise<T> {
+  return db
+    .transaction()
+    .execute((trx) => currentTransaction.run(trx, () => fn(trx)));
 }
 
 /** The transaction this call chain runs in, else the root connection. */
@@ -73,15 +91,22 @@ async function inSavepoint<T>(
     if (!mssql) await run(`release savepoint ${name}`);
     return result;
   } catch (err) {
-    await run(
-      mssql ? `rollback transaction ${name}` : `rollback to savepoint ${name}`,
-    );
-    if (!mssql) await run(`release savepoint ${name}`);
+    try {
+      await run(
+        mssql
+          ? `rollback transaction ${name}`
+          : `rollback to savepoint ${name}`,
+      );
+      if (!mssql) await run(`release savepoint ${name}`);
+    } catch {
+      // The error aborted the whole transaction (SQL Server does this for
+      // some errors), so there is no savepoint left. The outer transaction
+      // rolls back; report the error that caused it, not this one.
+    }
     throw err;
   }
 }
 
-/** A raw SQL statement, built with the app's Kysely (core never bundles it). */
-function raw(text: string): { execute(db: Kysely<any>): Promise<unknown> } {
-  return loadPackageFromClient("kysely").sql.raw(text);
+function raw(text: string) {
+  return kysely().sql.raw(text);
 }

@@ -1,0 +1,30 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { Job } from '@meghjs/core';
+import { {ClassName}, type {Base}Payload } from '{import}';
+
+describe('{ClassName}', () => {
+  const driver = process.env.MEGH_QUEUE_DRIVER;
+  let queue: {ClassName};
+
+  beforeAll(() => {
+    // Run the queue in memory, so the test needs no Redis.
+    process.env.MEGH_QUEUE_DRIVER = 'memory';
+    queue = new {ClassName}();
+  });
+
+  afterAll(() => {
+    if (driver === undefined) delete process.env.MEGH_QUEUE_DRIVER;
+    else process.env.MEGH_QUEUE_DRIVER = driver;
+  });
+
+  it('uses the "{QueueName}" queue', () => {
+    expect(queue.name).toBe('{QueueName}');
+  });
+
+  it('handles a "{JobName}" job', async () => {
+    const job = { name: '{JobName}', data: { id: 1 } } as Job<{Base}Payload>;
+
+    // Replace with what the job should do.
+    await expect(queue.handle{JobMethod}(job)).resolves.toBeUndefined();
+  });
+});

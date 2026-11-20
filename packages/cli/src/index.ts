@@ -19,6 +19,8 @@ export {
   makeConfig,
   makeMiddleware,
   makeDto,
+  makeClass,
+  makeTest,
 } from "./generators/make";
 export { resolveName, pascalCase, camelCase, kebabCase, snakeCase } from "./utils/names";
 export { findProjectRoot } from "./utils/project";

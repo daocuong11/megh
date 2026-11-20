@@ -5,7 +5,7 @@
  * @url https://github.com/xtareq
  */
 
-import { CONTROLLER_META_KEY, ROUTE_META_KEY } from "../common/container";
+import { ROUTE_META_KEY } from "../common/container";
 import { OpenApiOptions } from "../openapi/openapi";
 
 export type RouteMethods =
@@ -119,5 +119,53 @@ export function HttpCode(statusCode: number): MethodDecorator {
   }
   return function (target, propertyKey) {
     Reflect.defineMetadata(HTTP_CODE_META_KEY, statusCode, target, propertyKey);
+  };
+}
+
+export const REDIRECT_META_KEY = Symbol.for("megh:redirect");
+export const RESPONSE_HEADERS_META_KEY = Symbol.for("megh:response-headers");
+
+/**
+ * Redirect to `url` instead of sending the handler's return value. The
+ * handler can override both by returning `{ url, statusCode }`.
+ *
+ *   @Get("/docs")
+ *   @Redirect("https://docs.example.com", 301)
+ *   docs() {}
+ */
+export function Redirect(url: string, statusCode = 302): MethodDecorator {
+  if (!Number.isInteger(statusCode) || statusCode < 300 || statusCode > 399) {
+    throw new Error(
+      `[Megh] @Redirect expects a 3xx status code, got ${statusCode}.`,
+    );
+  }
+  return function (target, propertyKey) {
+    Reflect.defineMetadata(
+      REDIRECT_META_KEY,
+      { url, statusCode },
+      target,
+      propertyKey,
+    );
+  };
+}
+
+/**
+ * Set a response header on every response from this route. Stack it for
+ * several headers. Headers a returned `Results.*` value sets win.
+ *
+ *   @Get("/report")
+ *   @ResponseHeader("Cache-Control", "no-store")
+ *   report() { ... }
+ */
+export function ResponseHeader(name: string, value: string): MethodDecorator {
+  return function (target, propertyKey) {
+    const existing: Record<string, string> =
+      Reflect.getMetadata(RESPONSE_HEADERS_META_KEY, target, propertyKey) ?? {};
+    Reflect.defineMetadata(
+      RESPONSE_HEADERS_META_KEY,
+      { ...existing, [name]: value },
+      target,
+      propertyKey,
+    );
   };
 }

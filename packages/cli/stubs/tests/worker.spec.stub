@@ -1,0 +1,18 @@
+import { describe, expect, it } from 'vitest';
+import type { Job } from '@meghjs/core';
+import { {ClassName}, type {Base}Payload } from '{import}';
+
+describe('{ClassName}', () => {
+  const worker = new {ClassName}();
+  const job = { name: 'process', data: { id: 1 } } as Job<{Base}Payload>;
+
+  it('processes a job', async () => {
+    // Replace with what processing a job should do.
+    await expect(worker.process(job)).resolves.toBeUndefined();
+  });
+
+  it('runs its hooks without throwing', () => {
+    expect(() => worker.onCompleted(job)).not.toThrow();
+    expect(() => worker.onFailed(job, new Error('failed'))).not.toThrow();
+  });
+});

@@ -6,6 +6,7 @@ import { MultipartFile } from "../http/multipart";
 import { AppService } from "../common/decorators";
 import { SystemUseError } from "../common/exceptions/system-exception";
 import { SavedMultipartFile } from "@fastify/multipart";
+import { internalLogger } from "../observability/internal-logger";
 import {
   InternalErrorException,
   NotFoundException,
@@ -17,6 +18,8 @@ import {
   randomFilename,
   resolveWithin,
 } from "../common/utils/path-utils";
+
+const log = internalLogger("storage");
 
 export interface TransformOptions {
   resize?: { width: number; height: number };
@@ -205,7 +208,7 @@ export class FileStorage implements FileStorageInterface {
     try {
       fs.unlinkSync(fullPath);
     } catch (error) {
-      console.error("File removal error:", error);
+      log.error({ err: error }, "File removal error");
       throw new SystemUseError("Failed to remove file");
     }
   }
@@ -268,7 +271,8 @@ export class FileStorage implements FileStorageInterface {
       throw new SystemUseError("No file stream or filepath available");
     }
 
-    await this.ensureDirectoryExists(uploadDir);
+    // Follows symlinks: the real target must still be inside baseDir.
+    const target = await this.confineSaveTarget(uploadDir, fullPath);
 
     let size = 0;
     const limiter = new Transform({
@@ -286,7 +290,7 @@ export class FileStorage implements FileStorageInterface {
       },
     });
     // "wx" fails if the file appeared after the existence check above.
-    const out = fs.createWriteStream(fullPath, {
+    const out = fs.createWriteStream(target, {
       flags: overwrite ? "w" : "wx",
     });
 
@@ -302,7 +306,7 @@ export class FileStorage implements FileStorageInterface {
         );
       }
     } catch (err: any) {
-      if (err?.code !== "EEXIST") this.removeFileSync(fullPath);
+      if (err?.code !== "EEXIST") this.removeFileSync(target);
       if (
         err instanceof SystemUseError ||
         err instanceof InternalErrorException
@@ -312,7 +316,7 @@ export class FileStorage implements FileStorageInterface {
       if (err?.code === "EEXIST") {
         throw new SystemUseError(`File ${filename} already exists`);
       }
-      console.error(`Failed to save file ${originalFilename}:`, err);
+      log.error({ err, file: originalFilename }, "Failed to save file");
       throw new SystemUseError(`Failed to upload file ${originalFilename}`);
     } finally {
       if (savedFile.filepath && !f.file) {
@@ -380,7 +384,7 @@ export class FileStorage implements FileStorageInterface {
       await pipeline(fileStream, limiter, sharpPipeline, out);
     } catch (error: any) {
       if (error instanceof SystemUseError) throw error;
-      console.error("Image processing failed:", error);
+      log.error({ err: error }, "Image processing failed");
       throw new InternalErrorException("Image processing failed");
     }
   }
@@ -466,6 +470,54 @@ export class FileStorage implements FileStorageInterface {
     return real;
   }
 
+  /**
+   * Create `uploadDir` and return the real path to write `fullPath` to,
+   * rejecting anything a symlink would send outside the storage root: a
+   * symlinked directory on the way, or an existing symlinked file.
+   */
+  private async confineSaveTarget(
+    uploadDir: string,
+    fullPath: string,
+  ): Promise<string> {
+    await this.ensureDirectoryExists(this.baseDir);
+    const realBase = await fs.promises.realpath(this.baseDir);
+    const isInside = async (p: string) =>
+      !!resolveWithin(realBase, await fs.promises.realpath(p), true);
+
+    // Check the deepest existing ancestor before mkdir, so mkdir can't create
+    // directories through a symlink that points outside.
+    let existing = uploadDir;
+    while (!fs.existsSync(existing) && path.dirname(existing) !== existing) {
+      existing = path.dirname(existing);
+    }
+    if (!(await isInside(existing))) {
+      throw new SystemUseError("Invalid upload directory");
+    }
+    await this.ensureDirectoryExists(uploadDir);
+    const realDir = await fs.promises.realpath(uploadDir);
+    if (!resolveWithin(realBase, realDir, true)) {
+      throw new SystemUseError("Invalid upload directory");
+    }
+
+    const target = path.join(realDir, path.basename(fullPath));
+    let isLink = false;
+    try {
+      isLink = (await fs.promises.lstat(target)).isSymbolicLink();
+    } catch {
+      // Doesn't exist yet: nothing to follow.
+    }
+    if (isLink) {
+      let inside = false;
+      try {
+        inside = await isInside(target);
+      } catch {
+        // Dangling link: its target is unknown, so refuse it.
+      }
+      if (!inside) throw new SystemUseError("Invalid file path");
+    }
+    return target;
+  }
+
   private isFileExists(fpath: string): boolean {
     return fs.existsSync(fpath);
   }
@@ -480,7 +532,7 @@ export class FileStorage implements FileStorageInterface {
         fs.unlinkSync(filepath);
       }
     } catch (error) {
-      console.error("Failed to remove temp file:", error);
+      log.error({ err: error }, "Failed to remove temp file");
     }
   }
 

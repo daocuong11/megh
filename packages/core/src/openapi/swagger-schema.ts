@@ -13,6 +13,11 @@ import {
   getTransformerType,
   registerSchemaProperty,
 } from "./schema-properties";
+import {
+  findTypeRule,
+  getTransformedProperties,
+  getValidationRules,
+} from "../validator/metadata";
 
 // Decorator to add OpenAPI metadata to properties
 export function OpenApiProperty(
@@ -176,6 +181,17 @@ function nestedSchema(
   return { $ref: `#/components/schemas/${name}` };
 }
 
+/** The class given with Megh's `@Type(() => X)`, if any. */
+function getMeghType(classType: Function, key: string): Function | undefined {
+  try {
+    const rule = findTypeRule(classType, key);
+    const t = rule?.typeFunction?.();
+    return typeof t === "function" ? t : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function collectPropertyNames(
   classType: Function,
   validationMetadata: any[],
@@ -186,6 +202,7 @@ function collectPropertyNames(
     if (typeof m?.propertyName === "string") names.add(m.propertyName);
   }
   for (const key of getTransformerProperties(classType)) names.add(key);
+  for (const key of getTransformedProperties(classType)) names.add(key);
   names.delete("constructor");
   names.delete("");
   return [...names];
@@ -200,13 +217,16 @@ function buildClassSchema(
   if (!classType || !classType.prototype) return schema;
 
   const innerStack = new Set(stack).add(classType);
-  const validationMetadata: any[] =
-    getMetadataStorage().getTargetValidationMetadatas(
+  const validationMetadata: any[] = [
+    ...(getMetadataStorage().getTargetValidationMetadatas(
       classType,
       "",
       true,
       false,
-    ) ?? [];
+    ) ?? []),
+    // Megh's decorators: same names and constraints as class-validator's.
+    ...getValidationRules(classType),
+  ];
   const prototype = classType.prototype;
 
   for (const propertyName of collectPropertyNames(
@@ -225,7 +245,9 @@ function buildClassSchema(
       prototype,
       propertyName,
     );
-    const elementType = getTransformerType(classType, propertyName);
+    const elementType =
+      getTransformerType(classType, propertyName) ??
+      getMeghType(classType, propertyName);
     let swaggerProperty: any = {};
 
     switch (propertyType) {
@@ -375,9 +397,6 @@ export function generateClassSchema(
   return buildClassSchema(classType, options, new Set());
 }
 
-/** @deprecated Use {@link generateClassSchema}; this is an alias. */
-export const CreateSwaggerObjectSchema = generateClassSchema;
-
 /**
  * Replace every `#/components/schemas/X` `$ref` in `schema` whose class was
  * seen by {@link generateClassSchema} with that class's inline schema.
@@ -436,6 +455,11 @@ export function generateSwaggerSchema(
   };
 }
 
+/**
+ * @deprecated Documents the body wrapped in `{ code, status, data }`, which
+ * Megh doesn't send: handlers' return values are sent as they are. Use
+ * `@ApiResponse(200, UserDto)` on the route instead.
+ */
 export function OpenApiResponse(
   code: number = 200,
   model: any,

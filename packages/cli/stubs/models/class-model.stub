@@ -1,0 +1,15 @@
+/**
+ * A plain {Model} class: it is not mapped to a table.
+ *
+ * For a Megh ORM model with the columns of its migration, run
+ * `megh make:model {Model} --orm --force`; for a TypeORM entity, `--typeorm`.
+ */
+export class {Model} {
+  // Add the fields a {Model} has, e.g.
+  // id!: number;
+  // name!: string;
+
+  constructor(values: Partial<{Model}> = {}) {
+    Object.assign(this, values);
+  }
+}

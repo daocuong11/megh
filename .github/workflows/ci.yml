@@ -43,7 +43,8 @@ jobs:
       - name: Lint
         run: npm run lint --workspaces --if-present
       - name: Test
-        run: npm test --workspaces --if-present
+        # Same command as release.yml (`lerna run test`), so CI sees what a release sees.
+        run: npm test
 
       - name: Coverage (core)
         if: matrix.node-version == 22

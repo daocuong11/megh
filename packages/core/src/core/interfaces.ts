@@ -17,6 +17,16 @@ import {
 import type { RedisOptions } from "ioredis";
 import type { PluginOptions } from "../plugins/registry";
 import type { ViewEngine, ViewEngineOptions } from "../view";
+import type { RequestIdOptions } from "../observability/request-context";
+import type { HealthCheck, HealthOptions } from "../observability/health";
+import type { VersioningOptions } from "../http/versioning";
+import type { SecurityHeadersOptions } from "../security/headers";
+import type { RateLimitOptions } from "../security/rate-limit";
+import type {
+  ErrorHandlerFunction,
+  ErrorLogger,
+  ExceptionFilterLike,
+} from "../errors";
 
 export type CorsOptions = {
   origin?:
@@ -47,11 +57,62 @@ export type GlobalOptions = {
   authorization?: any;
   multipart?: any;
   staticFiles?: any;
+  /** View engine options, or an engine, for `useViews()`. */
   views?: ViewEngineOptions | ViewEngine;
+  /** `true` or options for `useSecurityHeaders()`. */
+  securityHeaders?: boolean | SecurityHeadersOptions;
+  /** `true` or options for `useRateLimit()`. */
+  rateLimit?: boolean | RateLimitOptions;
+  /** Task classes, or `{ path }` to scan a folder, for `useScheduler()`. */
+  scheduler?: Constructor[] | SchedulerScanOptions;
+  /** `true` or options for `useCompression()`. */
+  compression?: boolean | CompressionOptions;
+};
+
+/**
+ * Options for `useCompression()`, passed to `@fastify/compress`. The common
+ * ones are typed; see its README for the rest.
+ */
+export type CompressionOptions = {
+  /** Smallest body, in bytes, worth compressing. Defaults to 1024. */
+  threshold?: number;
+  /** Encodings to offer, in order of preference. */
+  encodings?: ("br" | "gzip" | "deflate" | "identity")[];
+  /** Compress only these content types (a RegExp or a test function). */
+  customTypes?: RegExp | ((contentType: string) => boolean);
+  [option: string]: unknown;
+};
+
+/** Options for `useScheduler({ path })`: scan a folder for task classes. */
+export type SchedulerScanOptions = {
+  /** Folder to scan, relative to the project root. Defaults to `src/tasks`. */
+  path?: string;
 };
 
 export type MeghApplicationOptions = PluginOptions & {
   server?: FastifyServerOptions;
+  /**
+   * Request IDs: read from `x-request-id` when the client sends a safe one,
+   * generated otherwise, echoed on the response and added to every log line.
+   * `false` turns this off. `server.genReqId` overrides the generator.
+   */
+  requestId?: RequestIdOptions;
+  /** Features that may change or be removed in a minor release. */
+  experimental?: ExperimentalOptions;
+};
+
+export type ExperimentalOptions = {
+  /**
+   * Validate `@Body()` and `@Query()` DTOs with a validator compiled once per
+   * class instead of calling class-transformer and class-validator on every
+   * request. Errors and the handler's value are the same; DTOs the compiled
+   * path can't reproduce exactly (nested DTOs, `@Type`, `@Transform`, async
+   * constraints) keep using class-validator.
+   *
+   * Defaults to the `MEGH_COMPILED_VALIDATION` environment variable
+   * (`true` or `1`), otherwise `false`.
+   */
+  compiledValidation?: boolean;
 };
 
 export type AutoControllerOptions = {
@@ -64,6 +125,19 @@ export type CacheOptions = {
   redisOptions?: RedisOptions;
 };
 
+/** Options for `app.run(port, options)`. */
+export type RunOptions = {
+  /** Interface to listen on. Defaults to `process.env.HOST`, else `0.0.0.0`. */
+  host?: string;
+  /** Called once the server is listening. */
+  onListen?: CallableFunction;
+  /**
+   * Milliseconds to wait for a graceful shutdown on SIGTERM/SIGINT before
+   * the process exits with code 1. Defaults to 10000.
+   */
+  shutdownTimeout?: number;
+};
+
 /** A function run at a stage of the application lifecycle. */
 export type LifecycleHook = () => void | Promise<void>;
 
@@ -71,6 +145,10 @@ export interface IMeghApplication {
   // all use
   useCors: (options: CorsOptions) => this;
   useCache: (options?: CacheOptions) => this;
+  /** Send security headers (CSP, HSTS, nosniff, ...) on every response. */
+  useSecurityHeaders: (options?: SecurityHeadersOptions) => this;
+  /** Limit requests per client per window, answering 429 over the limit. */
+  useRateLimit: (options?: RateLimitOptions) => this;
   useMultipart: (options?: any) => this;
   useOpenApi: (
     options?: OpenApiUiOptions | Constructor<MeghConfig<OpenApiUiOptions>>,
@@ -79,21 +157,41 @@ export interface IMeghApplication {
   /** Register the global authentication handler that populates `request.user`. */
   useAuthentication: (authentication: Constructor<MeghAuthentication>) => this;
   useAuthorization: (authorization: Constructor<any>) => this;
-  useSerialization: () => this;
+  /** Register global exception filters, run in order before the default error response. */
+  useExceptionFilters: (
+    filters: ExceptionFilterLike | ExceptionFilterLike[],
+  ) => this;
+  /** Register a function that handles request errors (a catch-all filter). */
+  useErrorHandler: (handler: ErrorHandlerFunction) => this;
+  /** Replace or turn off (`false`) logging of default error responses. */
+  useErrorLogger: (logger: ErrorLogger | false) => this;
+  /** Serve `GET /health` and `GET /ready`. */
+  useHealth: (options?: HealthOptions) => this;
+  /** Add a readiness check reported by `GET /ready`. */
+  addHealthCheck: (name: string, check: HealthCheck) => this;
   useControllers: (controllers: Constructor[] | AutoControllerOptions) => this;
   useStaticFiles: (options: any) => this;
   /** Configure the view engine used by `Results.View()`. */
   useViews: (options?: ViewEngineOptions | ViewEngine) => this;
-  useHttps: (options?: any) => this;
+  /** Compress responses with `@fastify/compress`. */
+  useCompression: (options?: CompressionOptions) => this;
+  /** Put a prefix such as `/api` in front of every controller and inline route. */
+  setGlobalPrefix: (
+    prefix: string,
+    options?: { exclude?: (string | RegExp)[] },
+  ) => this;
+  /** Version controller routes with `@Version()`, by URI or header. */
+  useVersioning: (options: VersioningOptions) => this;
+  /** Validate environment variables against a DTO class at boot. */
+  useEnvSchema: (schema: Constructor<object>) => this;
   useGlobal: (options: GlobalOptions) => this;
   useSocketIo: (options?: any) => this;
-
-  mapFeatures: () => this;
 
   // all map
   mapGet: <T extends (...args: any[]) => any>(path: string, fn: T) => any;
   mapPost: <T extends (...args: any[]) => any>(path: string, fn: T) => any;
   mapPut: <T extends (...args: any[]) => any>(path: string, fn: T) => any;
+  mapPatch: <T extends (...args: any[]) => any>(path: string, fn: T) => any;
   mapDelete: <T extends (...args: any[]) => any>(path: string, fn: T) => any;
 
   // lifecycle
@@ -107,7 +205,10 @@ export interface IMeghApplication {
   close: () => Promise<void>;
 
   // run
-  run: (port?: number, fn?: CallableFunction) => Promise<void>;
+  run: (
+    port?: number,
+    options?: RunOptions | CallableFunction,
+  ) => Promise<void>;
 }
 
 export type TestResponse =

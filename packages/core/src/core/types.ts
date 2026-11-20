@@ -4,21 +4,18 @@
  * @email xtrinsic96@gmail.com
  * @url https://github.com/xtareq
  */
-import {
-  FastifyRequest,
-  FastifyReply,
-  InjectOptions,
-  LightMyRequestResponse,
-} from "fastify";
+import type { RouteRateLimitOptions } from "../security/rate-limit";
+import { FastifyRequest, FastifyReply } from "fastify";
 import { MultipartFile } from "../http/multipart";
 import { OpenApiUiOptions } from "../openapi/openapi";
-import { Constructor } from "../common/helpers";
 import type {
   IMeghApplication,
   MeghApplicationOptions,
   CorsOptions,
   GlobalOptions,
   AutoControllerOptions,
+  SchedulerScanOptions,
+  CompressionOptions,
   TestApplication,
   TestResponse,
 } from "./interfaces";
@@ -30,6 +27,8 @@ export {
   CorsOptions,
   GlobalOptions,
   AutoControllerOptions,
+  SchedulerScanOptions,
+  CompressionOptions,
   TestApplication,
   TestResponse,
 };
@@ -114,8 +113,13 @@ export interface IRoute {
 
 export type FuncRoute = {
   handler: Function;
+  /** Middleware classes or instances, resolved when routes are mapped. */
   middlewares: any[];
   schema: any;
+  /** Set by `.authorized()`: the `@Authorized` options for this route. */
+  authorize?: { name?: string; [key: string]: unknown };
+  /** Set by `.rateLimit()`: this route's own limit, or `false` for none. */
+  rateLimit?: RouteRateLimitOptions | false;
 };
 
 export type StaticFileOptions = {

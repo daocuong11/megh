@@ -7,7 +7,7 @@
     "sourceMap": true,
     "outDir": "./dist",
 
-    // Decorators (typeorm, typedi, class-validator)
+    // Decorators (typeorm, the DI container, class-validator)
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
 
@@ -19,6 +19,7 @@
     // Type checking
     "strict": true,
     "strictPropertyInitialization": false,
+    "noUnusedLocals": true,
     "skipLibCheck": true,
 
     // Node 22 built-ins. Tests import their APIs from vitest.

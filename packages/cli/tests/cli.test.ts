@@ -3,10 +3,19 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { runCli } from "../src/program";
-import { createApplication } from "../src/commands/new";
+import { createApplication, FEATURES, initGit } from "../src/commands/new";
+import { spawnSync } from "child_process";
 import { runChecks } from "../src/commands/doctor";
 import { joinRoute, scanRoutes } from "../src/commands/route-list";
-import { makeController, makeDto, makeModel, makeService } from "../src/generators/make";
+import {
+  makeConfig,
+  makeController,
+  makeDto,
+  makeMail,
+  makeMiddleware,
+  makeModel,
+  makeService,
+} from "../src/generators/make";
 import { entryCandidates, projectLayout, resolveEntry } from "../src/utils/entry";
 import { kebabCase, pascalCase, resolveName } from "../src/utils/names";
 import { parseJsonc, readTsConfig } from "../src/utils/tsconfig";
@@ -22,10 +31,13 @@ const quiet = () => {
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "megh-cli-"));
   quiet();
+  // Projects made by `new` skip git init unless a test turns it back on.
+  vi.stubEnv("MEGH_SKIP_GIT", "1");
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -127,6 +139,67 @@ export class HomeController {
 describe("generators", () => {
   beforeEach(project);
 
+  it("creates a Mailable in src/mail", () => {
+    const info = vi.spyOn(console, "log");
+    makeMail("OrderShipped", { cwd: tmp });
+    const mail = read("src", "mail", "order-shipped.mail.ts");
+    expect(mail).toContain("import { Mailable } from '@meghjs/core';");
+    expect(mail).toContain("export class OrderShippedMail extends Mailable {");
+    expect(mail).toContain("return { subject: 'Order Shipped' };");
+    expect(mail).toContain("new OrderShippedMail()");
+    expect(mail).not.toMatch(/\{(ClassName|Title)\}/);
+    // The project has no src/app.ts calling useMail(), so it says how to turn mail on.
+    expect(info.mock.calls.flat().join("\n")).toContain("app.useMail()");
+    expect(() => makeMail("OrderShipped", { cwd: tmp })).toThrow(/already exists/);
+  });
+
+  it("puts a module folder before the type folder", () => {
+    makeModel("user", { cwd: tmp });
+    makeModel("users/user", { cwd: tmp });
+    makeController("users/user", { cwd: tmp });
+    makeService("users/user", { cwd: tmp });
+    makeDto("users/user", { cwd: tmp });
+    makeMiddleware("users/auth", { cwd: tmp });
+    makeConfig("users/settings", { cwd: tmp });
+    makeMail("users/welcome", { cwd: tmp });
+    for (const file of [
+      "src/models/user.model.ts",
+      "src/users/models/user.model.ts",
+      "src/users/controllers/user.controller.ts",
+      "src/users/services/user.service.ts",
+      "src/users/dtos/user.dto.ts",
+      "src/users/middlewares/auth.middleware.ts",
+      "src/users/config/settings.config.ts",
+      "src/users/mail/welcome.mail.ts",
+    ]) {
+      expect(exists(...file.split("/")), file).toBe(true);
+    }
+    for (const old of ["controllers", "services", "dtos", "middlewares", "mail"]) {
+      expect(exists("src", old, "users"), `src/${old}/users`).toBe(false);
+    }
+    expect(exists("src", "models", "users")).toBe(false);
+  });
+
+  it("puts --root inside the module folder", () => {
+    makeModel("users/user", { cwd: tmp, root: "domain" });
+    expect(exists("src", "users", "domain", "user.model.ts")).toBe(true);
+  });
+
+  it("strips a Mail suffix and supports folders", () => {
+    makeMail("admin/InvoiceMail", { cwd: tmp });
+    expect(read("src", "admin", "mail", "invoice.mail.ts")).toContain("export class InvoiceMail extends Mailable");
+    makeMail("Welcome", { cwd: tmp, root: "modules/users" });
+    expect(exists("src", "modules", "users", "welcome.mail.ts")).toBe(true);
+  });
+
+  it("does not repeat the useMail() hint once the app calls it", () => {
+    fs.mkdirSync(path.join(tmp, "src"), { recursive: true });
+    fs.writeFileSync(path.join(tmp, "src", "app.ts"), "app.useMail();\n");
+    const info = vi.spyOn(console, "log");
+    makeMail("Welcome", { cwd: tmp });
+    expect(info.mock.calls.flat().join("\n")).not.toContain("Turn mail on");
+  });
+
   it("creates a model and refuses to overwrite without force", () => {
     makeModel("product", { cwd: tmp });
     expect(read("src", "models", "product.model.ts")).toContain("class Product");
@@ -147,7 +220,7 @@ describe("generators", () => {
 }`,
     );
     makeController("admin/product", { cwd: tmp, model: "product" });
-    const ctrl = read("src", "controllers", "admin", "product.controller.ts");
+    const ctrl = read("src", "admin", "controllers", "product.controller.ts");
     expect(ctrl).toContain("class ProductController");
     expect(ctrl).toContain("@ApiController('/admin/products')");
     expect(ctrl).toContain("from '../../services/product.service'");
@@ -191,8 +264,8 @@ describe("generators", () => {
 
   it("leaves no unrendered placeholders in any stub", () => {
     makeController("a", { cwd: tmp, resource: true });
-    makeController("b", { cwd: tmp, model: "b", orm: true });
-    makeModel("c", { cwd: tmp, orm: true });
+    makeController("b", { cwd: tmp, model: "b", typeorm: true });
+    makeModel("c", { cwd: tmp, typeorm: true });
     const files = fs
       .readdirSync(path.join(tmp, "src"), { recursive: true, withFileTypes: true })
       .filter((e) => e.isFile())
@@ -209,6 +282,8 @@ describe("new", () => {
     const pkg = JSON.parse(read("my_api", "package.json"));
     expect(pkg.name).toBe("my-api");
     expect(pkg.dependencies["@fastify/cors"]).toBeDefined();
+    expect(pkg.dependencies["@fastify/swagger"]).toBeDefined();
+    expect(pkg.dependencies["@fastify/swagger-ui"]).toBeDefined();
     expect(pkg.scripts["start:dev"]).toBe("megh serve");
     expect(pkg.scripts.test).toBe("vitest run");
     expect(read("my_api", "vitest.config.mts")).toContain("swc.vite()");
@@ -219,13 +294,93 @@ describe("new", () => {
     expect(read("my_api", "megh-env.d.ts")).not.toContain("reference");
   });
 
-  it("adds @meghjs/data and its types for the database features", async () => {
-    await createApplication("db_api", { cwd: tmp, yes: true, skipInstall: true, features: ["typeorm"] });
-    const pkg = JSON.parse(read("db_api", "package.json"));
-    expect(pkg.dependencies["@meghjs/data"]).toBe(pkg.dependencies["@meghjs/cli"]);
-    expect(pkg.dependencies.typeorm).toBeDefined();
-    expect(read("db_api", "megh-env.d.ts")).toContain('/// <reference types="@meghjs/data" />');
-    expect(read("db_api", "tsconfig.json")).toContain('"megh-env.d.ts"');
+  it("offers only openapi, cors and orm, and says how to add the others", async () => {
+    expect(FEATURES).toEqual(["openapi", "cors", "orm"]);
+    for (const [feature, hint] of [
+      ["mail", /app\.useMail\(\)/],
+      ["scalar", /provider: 'scalar'/],
+      ["typeorm", /useTypeORM/],
+      ["knex", /useKnex/],
+    ] as const) {
+      await expect(
+        createApplication(`${feature}_api`, { cwd: tmp, yes: true, skipInstall: true, features: [feature] }),
+      ).rejects.toThrow(hint);
+      expect(exists(`${feature}_api`, "package.json")).toBe(false);
+    }
+  });
+
+  it("leaves the OpenAPI packages out of a minimal project", async () => {
+    await createApplication("tiny", { cwd: tmp, yes: true, skipInstall: true, minimal: true });
+    const pkg = JSON.parse(read("tiny", "package.json"));
+    expect(pkg.dependencies["@fastify/swagger"]).toBeUndefined();
+  });
+
+  const hasGit = spawnSync("git", ["--version"]).status === 0;
+
+  it.runIf(hasGit)("runs git init in the new project", async () => {
+    vi.stubEnv("MEGH_SKIP_GIT", "");
+    await createApplication("git_api", { cwd: tmp, yes: true, skipInstall: true });
+    expect(exists("git_api", ".git")).toBe(true);
+  });
+
+  it("skips git init with skipGit", async () => {
+    vi.stubEnv("MEGH_SKIP_GIT", "");
+    await createApplication("nogit_api", { cwd: tmp, yes: true, skipInstall: true, skipGit: true });
+    expect(exists("nogit_api", ".git")).toBe(false);
+  });
+
+  it.runIf(hasGit)("leaves a folder that is already inside a repository alone", () => {
+    expect(initGit(tmp)).toBe("initialized");
+    const inner = path.join(tmp, "packages", "api");
+    fs.mkdirSync(inner, { recursive: true });
+    expect(initGit(inner)).toBe("inside-repo");
+    expect(fs.existsSync(path.join(inner, ".git"))).toBe(false);
+  });
+
+  it("leaves mail out", async () => {
+    await createApplication("plain", { cwd: tmp, yes: true, skipInstall: true });
+    expect(JSON.parse(read("plain", "package.json")).dependencies.nodemailer).toBeUndefined();
+    expect(read("plain", "src", "app.ts")).not.toContain("useMail");
+    expect(read("plain", ".env")).not.toContain("MEGH_MAIL");
+    expect(exists("plain", "src", "mail")).toBe(false);
+  });
+
+  it("sets up MeghORM with the orm feature, on SQLite by default", async () => {
+    await createApplication("shop", { cwd: tmp, yes: true, skipInstall: true, features: ["orm"] });
+    const pkg = JSON.parse(read("shop", "package.json"));
+    expect(pkg.dependencies["better-sqlite3"]).toBeDefined();
+    expect(pkg.devDependencies["@faker-js/faker"]).toBeDefined(); // for make:factory
+    expect(pkg.dependencies.kysely).toBeUndefined(); // ships with @meghjs/core
+    expect(pkg.dependencies["@meghjs/data"]).toBeUndefined();
+    expect(read("shop", "src", "app.ts")).toContain("app.useMeghORM();");
+    expect(read("shop", ".env")).toContain("DATABASE_URL=sqlite:./database.sqlite");
+    expect(read("shop", ".gitignore")).toContain("database.sqlite");
+    expect(exists("shop", "src", "database", "migrations", ".gitkeep")).toBe(true);
+    expect(read("shop", "src", "database", "seeders", "database.seeder.ts")).toContain("export default defineSeeder({");
+    expect(exists("shop", "src", "database", "connection.ts")).toBe(false);
+  });
+
+  it("--database picks the driver and URL, and implies the orm feature", async () => {
+    await createApplication("my-api", { cwd: tmp, yes: true, skipInstall: true, features: ["openapi"], database: "postgres" });
+    const pkg = JSON.parse(read("my-api", "package.json"));
+    expect(pkg.dependencies.pg).toBeDefined();
+    expect(read("my-api", "src", "app.ts")).toContain("app.useMeghORM();");
+    expect(read("my-api", ".env")).toContain("DATABASE_URL=postgres://postgres:postgres@localhost:5432/my_api");
+    expect(read("my-api", ".gitignore")).not.toContain("database.sqlite");
+
+    await createApplication("legacy", { cwd: tmp, yes: true, skipInstall: true, database: "mssql" });
+    const mssql = JSON.parse(read("legacy", "package.json"));
+    expect([mssql.dependencies.tedious, mssql.dependencies.tarn].every(Boolean)).toBe(true);
+    expect(read("legacy", "src", "app.ts")).toContain("useOpenApi"); // default features kept
+  });
+
+  it("rejects an unknown database, and --database with --minimal", async () => {
+    await expect(
+      createApplication("bad", { cwd: tmp, yes: true, skipInstall: true, database: "oracle" }),
+    ).rejects.toThrow(/Unknown database "oracle"/);
+    await expect(
+      createApplication("bad2", { cwd: tmp, yes: true, skipInstall: true, minimal: true, database: "mysql" }),
+    ).rejects.toThrow(/needs a full project/);
   });
 
   it("scaffolds a minimal project", async () => {
@@ -269,10 +424,10 @@ describe("runCli", () => {
     return { write: (s: string) => (out += s), text: () => out };
   };
 
-  it("prints the version", async () => {
+  it("prints the version under the logo", async () => {
     const o = capture();
     expect(await runCli(["-v"], { writeOut: o.write })).toBe(0);
-    expect(o.text().trim()).toBe(require("../package.json").version);
+    expect(o.text()).toContain(`v${require("../package.json").version}`);
   });
 
   it("returns non-zero for unknown commands", async () => {
@@ -285,6 +440,14 @@ describe("runCli", () => {
     project();
     expect(await runCli(["m:m", "user", "-rt", "domain"], { cwd: tmp })).toBe(0);
     expect(exists("src", "domain", "user.model.ts")).toBe(true);
+  });
+
+  it("registers make:mail and its m:mail alias", async () => {
+    project();
+    expect(await runCli(["make:mail", "Welcome"], { cwd: tmp })).toBe(0);
+    expect(await runCli(["m:mail", "Goodbye"], { cwd: tmp })).toBe(0);
+    expect(exists("src", "mail", "welcome.mail.ts")).toBe(true);
+    expect(exists("src", "mail", "goodbye.mail.ts")).toBe(true);
   });
 
   it("reports CliErrors as exit code 1", async () => {

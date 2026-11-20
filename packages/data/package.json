@@ -1,6 +1,6 @@
 {
   "name": "@meghjs/data",
-  "version": "0.5.0",
+  "version": "0.6.5",
   "description": "TypeORM and Knex integration for Megh",
   "author": "Tareq Hossain",
   "license": "MIT",
@@ -35,7 +35,10 @@
     "typeorm",
     "knex",
     "database",
-    "typescript"
+    "orm",
+    "sql",
+    "typescript",
+    "fastify"
   ],
   "scripts": {
     "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
@@ -45,7 +48,7 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@meghjs/core": "^0.5.0",
+    "@meghjs/core": "^0.6.5",
     "better-sqlite3": ">=12.0.0",
     "knex": ">=2.0.0",
     "mssql": ">=11.0.0",
@@ -78,7 +81,7 @@
     }
   },
   "devDependencies": {
-    "@meghjs/core": "^0.5.0",
+    "@meghjs/core": "^0.6.5",
     "@swc/core": "^1.16.20",
     "@types/node": "^22.20.5",
     "better-sqlite3": "^12.9.0",
@@ -93,6 +96,10 @@
     "type": "git",
     "url": "git+https://github.com/meghjs/megh.git",
     "directory": "packages/data"
+  },
+  "homepage": "https://meghjs.github.io/advanced/database",
+  "bugs": {
+    "url": "https://github.com/meghjs/megh/issues"
   },
   "publishConfig": {
     "access": "public"

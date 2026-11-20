@@ -46,6 +46,7 @@ Documentation: **https://meghjs.github.io**
   - [Pagination](#pagination)
   - [Events](#events)
   - [Queues & Workers](#queues--workers)
+  - [Mail](#mail)
   - [Task Scheduling](#task-scheduling)
   - [Caching](#caching)
   - [File Uploads](#file-uploads)
@@ -69,17 +70,18 @@ Documentation: **https://meghjs.github.io**
 ## Features
 
 - 🎯 **Decorator-based routing** — TypeScript decorator দিয়ে controller ও route তৈরি করুন
-- 💉 **Dependency injection** — `MeghContainer`, `@Injectable` এবং `Token`, বর্তমানে [TypeDI](https://github.com/typestack/typedi)-এর ওপর ভিত্তি করে
+- 💉 **Dependency injection** — `MeghContainer`, `@Injectable` এবং `Token`, Megh-এর নিজস্ব container-এর ওপর ভিত্তি করে (কোনো third-party DI library ছাড়া)
 - 📄 **OpenAPI / Swagger** — Swagger UI বা [Scalar](https://scalar.com) দিয়ে স্বয়ংক্রিয় documentation
 - ✅ **Validation** — [class-validator](https://github.com/typestack/class-validator) দিয়ে request DTO validate ও whitelist করা হয়
 - 🔑 **Authentication** — pluggable handler, যা `request.user` সেট করে
 - 🔒 **Authorization** — deny-by-default `@Authorized` route
 - 📁 **File uploads** — নিরাপদ, সীমাবদ্ধ storage-সহ multipart support
-- 🧬 **Models & migrations** — [Kysely](https://kysely.dev)-এর ওপর তৈরি type-safe, Eloquent-style model ও migration
+- 🧬 **Models & migrations** — decorator model, query builder এবং migration-এর জন্য schema builder, সবই type-safe
 - 🗄️ **Database** — একই pagination কাঠামোসহ TypeORM ও Knex integration
 - ⚙️ **Config** — typed, environment-aware config class
 - 📣 **Events** — queue-based delivery ও Socket.IO broadcast-সহ typed event
 - 📬 **Queues & workers** — [BullMQ](https://docs.bullmq.io)-এ background job, test-এর জন্য in-memory driver-সহ
+- ✉️ **Mail** — SMTP, SendGrid, Mailgun, Postmark বা Resend দিয়ে mailable class পাঠানো, সঙ্গে সঙ্গে বা queue-তে, test fake-সহ
 - ⏰ **Task scheduling** — cron, interval ও timeout job
 - 🗃️ **Caching** — in-memory বা Redis, TTL ও tag-based invalidation-সহ
 - 📝 **Logging** — [pino](https://getpino.io) দিয়ে structured JSON log
@@ -128,21 +130,22 @@ Megh integration-গুলোকে মূল install-এর বাইরে র
 এগুলোর কোনোটি ছাড়াই package-টি ঠিকঠাক import হয়, আর কোনো feature-এর যখন এগুলোর একটি দরকার হয়,
 তখন আপনি একটি স্পষ্ট error পাবেন:
 
-| Feature                                    | Install                                                                           |
-| -------------------------------------------- | --------------------------------------------------------------------------------- |
-| CORS (`useCors`)                             | `npm i @fastify/cors`                                                             |
-| File uploads (`useMultipart`, `@UploadFile`) | `npm i @fastify/multipart`                                                      |
-| Static files (`useStaticFiles`)            | `npm i @fastify/static`                                                           |
-| OpenAPI with Swagger UI                    | `npm i @fastify/swagger @fastify/swagger-ui`                                      |
-| OpenAPI with Scalar                        | `npm i @fastify/swagger @scalar/fastify-api-reference`                            |
-| Models & migrations (`useDatabase`)        | `npm i kysely` + একটি driver (`pg`, `mysql2`, `better-sqlite3`)                    |
-| TypeORM                                    | `npm i typeorm` + একটি driver (`pg`, `mysql2`, `sqlite3`, `better-sqlite3`, `mssql`) |
-| Knex                                       | `npm i knex` + একটি driver                                                         |
-| Queues & workers                           | `npm i bullmq ioredis` (`memory`/`sync` driver-এ দরকার নেই)                         |
-| Redis cache                                | `npm i ioredis`                                                                   |
-| WebSocket                                    | `npm i socket.io fastify-socket.io`                                               |
-| `FileStorage`-এ image transform            | `npm i sharp`                                                                     |
-| সুন্দরভাবে format করা dev log             | `npm i -D pino-pretty`                                                            |
+| Feature                                      | Install                                                                              |
+| -------------------------------------------- | ------------------------------------------------------------------------------------ |
+| CORS (`useCors`)                             | `npm i @fastify/cors`                                                                |
+| File uploads (`useMultipart`, `@UploadFile`) | `npm i @fastify/multipart`                                                           |
+| Static files (`useStaticFiles`)              | `npm i @fastify/static`                                                              |
+| OpenAPI with Swagger UI                      | `npm i @fastify/swagger @fastify/swagger-ui`                                         |
+| OpenAPI with Scalar                          | `npm i @fastify/swagger @scalar/fastify-api-reference`                               |
+| MeghORM (`useMeghORM`)                       | একটি driver (`pg`, `mysql2`, `better-sqlite3`, বা `tedious tarn`)                    |
+| TypeORM                                      | `npm i typeorm` + একটি driver (`pg`, `mysql2`, `sqlite3`, `better-sqlite3`, `mssql`) |
+| Knex                                         | `npm i knex` + একটি driver                                                           |
+| Queues & workers                             | `npm i bullmq ioredis` (`memory`/`sync` driver-এ দরকার নেই)                          |
+| Mail over SMTP                               | `npm i nodemailer` (SendGrid, Mailgun, Postmark ও Resend mailer-এ কিছু লাগে না)      |
+| Redis cache                                  | `npm i ioredis`                                                                      |
+| WebSocket                                    | `npm i socket.io fastify-socket.io`                                                  |
+| `FileStorage`-এ image transform              | `npm i sharp`                                                                        |
+| সুন্দরভাবে format করা dev log                | `npm i -D pino-pretty`                                                               |
 
 ### Module format
 
@@ -233,7 +236,7 @@ class UserController {
 
 ### Route Methods
 
-| Decorator       | HTTP method |
+| Decorator        | HTTP method |
 | ---------------- | ----------- |
 | `@Get(path?)`    | GET         |
 | `@Post(path?)`   | POST        |
@@ -259,12 +262,12 @@ async getUser(
 }
 ```
 
-| Decorator       | উৎস                     |
+| Decorator       | উৎস                        |
 | --------------- | -------------------------- |
-| `@Param(key?)`  | route path-এর parameter |
-| `@Query(key?)`  | query string            |
-| `@Body()`       | request body            |
-| `@Header(key?)` | request header          |
+| `@Param(key?)`  | route path-এর parameter    |
+| `@Query(key?)`  | query string               |
+| `@Body()`       | request body               |
+| `@Header(key?)` | request header             |
 | `@AuthUser()`   | বর্তমান authenticated user |
 
 আপনি যদি tsx, esbuild বা SWC দিয়ে compile করেন, তাহলে compiler decorator
@@ -321,20 +324,19 @@ class LoggingMiddleware extends MeghMiddleware {
 app.useMiddlewares([LoggingMiddleware]);
 ```
 
-`@UseMiddleware` দিয়ে middleware-কে একটি controller বা route-এর মধ্যে সীমাবদ্ধ করুন। 0.3.0-এ
-একটি **instance** পাস করুন। Class পাস করলে boot-এর সময় crash করে (দেখুন
-[known issues](#known-issues-in-030)):
+`@UseMiddleware` দিয়ে middleware-কে একটি controller বা route-এর মধ্যে সীমাবদ্ধ করুন। Class
+DI-এর মাধ্যমে resolve হয়, তাই constructor injection ব্যবহার করা যায়। Instance-ও কাজ করে:
 
 ```typescript
 // Apply to entire controller
-@UseMiddleware(new LoggingMiddleware())
+@UseMiddleware(LoggingMiddleware)
 @ApiController('/users')
 class UserController { ... }
 
 // Or apply to a specific route
 @ApiController('/users')
 class UserController {
-  @UseMiddleware(new LoggingMiddleware())
+  @UseMiddleware([LoggingMiddleware, new RateLimitMiddleware(100)])
   @Get('/')
   getAll() { ... }
 }
@@ -593,15 +595,21 @@ app.useOpenApi({
 **Config class:**
 
 ```typescript
-import { AppConfig, MeghConfig, Environment } from "@meghjs/core";
+import {
+  AppConfig,
+  MeghConfig,
+  Environment,
+  OpenApiUiOptions,
+} from "@meghjs/core";
 
 @AppConfig
-export class OpenApiConfig extends MeghConfig {
-  config(env: Environment) {
+export class OpenApiConfig extends MeghConfig<OpenApiUiOptions> {
+  config(env: Environment): OpenApiUiOptions {
     return {
       info: { title: "My API", version: "1.0.0" },
       routePrefix: "/docs",
       provider: "scalar", // or 'default' for Swagger UI
+      auth: "bearer", // marks @Authorized routes, for the "Authorize" button
     };
   }
 }
@@ -615,7 +623,7 @@ if (app.isDevelopment()) {
 **`@OpenApi` দিয়ে route-level documentation:**
 
 ```typescript
-import { OpenApi, OpenApiProperty, OpenApiSchema } from '@meghjs/core';
+import { ApiResponse, Authorized, OpenApi, OpenApiProperty, OpenApiSchema, Paginated } from '@meghjs/core';
 
 @OpenApiSchema()
 export class UserQuery {
@@ -628,24 +636,11 @@ export class UserQuery {
   page?: number;
 }
 
-@OpenApi({
-  summary: 'Get all users',
-  tags: ['users'],
-  security: [{ bearerAuth: [] }],
-  response: {
-    200: {
-      description: 'List of users',
-      type: 'object',
-      properties: {
-        data: { type: 'array' },
-        total: { type: 'integer', example: 100 },
-      },
-    },
-    401: { description: 'Unauthorized' },
-  },
-})
+@OpenApi({ summary: 'Get all users', tags: ['users'] })
+@ApiResponse(200, Paginated(User)) // a MeghORM model or a DTO: { data: User[], meta }
+@Authorized() // documents 401 and 403
 @Get('/')
-getAll(@Query() query: UserQuery) { ... }
+getAll(@Query() query: UserQuery) { ... } // the DTO documents the query and a 400
 ```
 
 Schema শুধু decorate করা property থেকেই তৈরি হয়, আর nested DTO-গুলো
@@ -657,34 +652,47 @@ Schema শুধু decorate করা property থেকেই তৈরি হ
 
 ### MeghORM
 
-[Kysely](https://kysely.dev)-এর ওপর তৈরি type-safe model: column-এর নাম, মানের
-type এবং load করা relation TypeScript দিয়ে যাচাই করা হয়।
+Megh-এর নিজস্ব ORM: decorator model এবং query builder; column-এর নাম, মানের
+type এবং load করা relation TypeScript দিয়ে যাচাই করা হয়। ভেতরে Kysely চলে,
+সেটি আপনাকে set up করতে হয় না।
 
 ```bash
-npm install kysely pg   # or: mysql2, better-sqlite3
+npm install pg   # or: mysql2, better-sqlite3, tedious tarn
 ```
 
 ```typescript
-import { Model, hasMany } from "@meghjs/core";
+import {
+  DB,
+  Model,
+  Table,
+  PrimaryKey,
+  AutoIncrement,
+  Column,
+  CreatedAt,
+  HasMany,
+} from "@meghjs/core";
 import { Post } from "./post.model";
 
+@Table("users")
 export class User extends Model {
-  static readonly table = "users";
+  @PrimaryKey() @AutoIncrement() id?: number;
+  @Column({ unique: true }) email!: string;
+  @Column({ nullable: true }) name!: string | null;
+  @CreatedAt() createdAt?: Date;
 
-  id!: number;
-  email!: string;
-  name!: string | null;
-
-  posts = hasMany(() => Post);
+  @HasMany(() => Post) posts!: HasMany<Post>;
 }
 
-// app.ts
-app.useDatabase(db); // a Kysely instance
+// app.ts: no Kysely setup, no connection file
+app.useMeghORM(); // reads DATABASE_URL, or pass { dialect, host, ... }
 
 const users = await User.where("email", "like", "%@acme.io")
   .with("posts")
   .orderBy("name")
   .get();
+
+// or as a query builder
+const ids = await DB.table("users").where("active", true).pluck("id");
 ```
 
 Migration-গুলো `src/database/migrations`-এ থাকে এবং CLI দিয়ে চালানো হয়:
@@ -694,8 +702,27 @@ npx megh make:migration create_users_table
 npx megh migrate
 ```
 
-Relation, timestamp, soft delete, cast, transaction এবং migration
-command-গুলো [MeghORM guide](https://meghjs.github.io/advanced/orm)-এ বিস্তারিত আছে।
+Seeder database-এ data ভরে, আর factory [Faker](https://fakerjs.dev) দিয়ে
+fake value-সহ row বানায়:
+
+```bash
+npx megh make:factory user      # UserFactory, প্রতিটি column-এ একটি Faker value
+npx megh make:seeder users      # await UserFactory.createMany(10)
+npx megh migrate --seed         # অথবা: npx megh db:seed
+```
+
+Relation, timestamp, soft delete, cast, transaction, migration, seeding এবং
+factory [MeghORM guide](https://meghjs.github.io/advanced/orm)-এ বিস্তারিত আছে।
+
+অথবা template থেকে পুরো table, feature এবং business domain scaffold করুন:
+
+```bash
+npx megh sc:auth --strategy jwt --roles multiple --permissions   # sign-up, sign-in, role
+npx megh sc:domain ecommerce --resource                          # product, order, payment, ...
+npx megh make:resource Ticket --fields "title,body,status:in(open|closed),user_id:cascade"
+```
+
+Template, field, domain, auth এবং RBAC [Scaffold](https://meghjs.github.io/cli/scaffold/)-এ বিস্তারিত আছে।
 
 ---
 
@@ -892,6 +919,48 @@ await waitForMemoryQueues(); // wait until all jobs finish
 resetMemoryQueues();
 ```
 
+### Mail
+
+**Mailable** class দিয়ে email পাঠান — SMTP ([Nodemailer](https://nodemailer.com)) অথবা SendGrid, Mailgun, Postmark ও Resend-এর API দিয়ে, সঙ্গে সঙ্গে বা queue থেকে।
+
+```ts
+// app.ts — settings আসে .env-এর MEGH_MAIL_* থেকে
+app.useMail({ queue: true });
+
+// mail/welcome.mail.ts — npx megh make:mail Welcome
+export class WelcomeMail extends Mailable {
+  constructor(private readonly user: User) {
+    super();
+  }
+
+  envelope() {
+    return { subject: `Welcome, ${this.user.name}` };
+  }
+
+  content() {
+    return { html: `<p>Hi ${this.user.name}!</p>`, text: `Hi ${this.user.name}!` };
+  }
+}
+
+// যেকোনো service-এ
+constructor(private readonly mailer: Mailer) {}
+
+await this.mailer.to(user.email).send(new WelcomeMail(user));
+await this.mailer.to(user.email).later(60_000, new WelcomeMail(user)); // queued
+```
+
+```ini
+MEGH_MAIL_MAILER=smtp            # অথবা sendgrid, mailgun, postmark, resend, failover, log
+MEGH_MAIL_HOST=smtp.example.com
+MEGH_MAIL_FROM_ADDRESS=hello@example.com
+```
+
+- কোনো mailer সেট না থাকলে development-এ mail log-এ লেখা হয়; production-এ app চালু হয় না।
+- `failover` একাধিক mailer ক্রমানুসারে চেষ্টা করে: `MEGH_MAIL_FAILOVER=sendgrid,smtp`।
+- Test-এ `Mailer.fake()` mail রেকর্ড করে: `mail.assertSent(WelcomeMail, (sent) => sent.hasTo(user.email))`।
+
+সব option-এর জন্য [Mail guide](https://meghjs.github.io/advanced/mail) দেখুন।
+
 ---
 
 ### Task Scheduling
@@ -987,8 +1056,21 @@ app.useMultipart({
 });
 ```
 
+`useMultipart()` তার option-গুলো `@fastify/multipart`-এ পাঠায়। Megh
+`attachFieldsToBody: true` (`@UploadFile`-এর জন্য দরকার) এবং প্রতি file-এ
+**10 MB** limit সেট করে, যদি না আপনি নিজের `limits` দেন। এই limit আর
+`FileStorage`-এর `maxFileSize` (50 MB)-এর মধ্যে যেটা ছোট সেটাই কাজ করে, তাই
+বড় file-এর জন্য দুটোই বাড়ান।
+
 ```typescript
-import { FileStorage, UploadFile, MultipartFile, OpenApi } from "@meghjs/core";
+import {
+  ApiController,
+  Post,
+  FileStorage,
+  UploadFile,
+  MultipartFile,
+  OpenApi,
+} from "@meghjs/core";
 
 @ApiController("/files")
 class FileController {
@@ -1050,7 +1132,7 @@ import path from "path";
 
 // requires @fastify/static
 app.useStaticFiles({
-  path: path.join(process.cwd(), "public"),
+  root: path.join(process.cwd(), "public"),
   prefix: "/static/",
 });
 ```
@@ -1188,7 +1270,7 @@ Redis ছাড়াই job dispatch করে এমন code test করতে
 - `NODE_ENV=production` সেট করুন। সেট না থাকলেও production হিসেবে ধরা হয়, তবে স্পষ্টভাবে সেট করাই ভালো।
   Production mode-এ 5xx-এর বিস্তারিত লুকানো থাকে, JSON log লেখা হয়, এবং
   `app.isDevelopment()` false হয়।
-- `app.run(port)`-এর default port 4000। এটি `SIGTERM`/`SIGINT` handle করে,
+- `app.run(port)`-এর default port হলো `PORT`, না থাকলে 4000। এটি `SIGTERM`/`SIGINT` handle করে,
   বন্ধ হওয়ার আগে scheduler থামিয়ে এবং register করা worker-গুলো বন্ধ করে।
 - `@Authorized` ব্যবহার করলে একটি authorizer register করুন; সেটি না থাকলে ওই route-গুলো
   403 return করে।
@@ -1197,21 +1279,21 @@ Redis ছাড়াই job dispatch করে এমন code test করতে
 
 ## Upgrading to 0.3
 
-| Area | পরিবর্তন |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Dependencies | `@fastify/cors`, `@fastify/multipart`, `@fastify/static`, `@fastify/swagger`, `@fastify/swagger-ui`, `@scalar/fastify-api-reference`, `fastify-socket.io`, `class-validator`, `class-transformer` এবং `pino-pretty` এখন peer dependency। আপনি যেগুলো ব্যবহার করেন সেগুলো install করুন ([table](#optional-dependencies))। |
-| Package | শুধু CommonJS, একটি `exports` map-সহ। Deep import (`@meghjs/core/dist/...`) আর resolve হয় না। License এখন MIT। |
-| Environment | `isDevelopment()`-এর জন্য `NODE_ENV=development` লাগে; সেট না থাকলে এখন production বোঝায়। |
-| Authorization | `@Authorized` deny-by-default। যে authorizer `false` return করে, সেটি এখন access নিষেধ করে। `AuthorizeMiddleware`, `AppAuthorization`, `AuthHandler` এবং `AuthReturnTypes` সরিয়ে ফেলা হয়েছে। একটি `authorize()` method-সহ সাধারণ `@CanAuthorize` class ব্যবহার করুন। |
-| Validation | অজানা DTO property 400 দিয়ে প্রত্যাখ্যান করা হয়। Handler-গুলো DTO instance পায়। Error body এখন `{ code, status, message, errors[] }` (আগে ছিল `{ code, error: "ValidationError", errors }`)। |
-| Pagination | সব paginator `{ data, meta: { total, page, perPage, lastPage, next, prev } }` return করে এবং `{ page, perPage }` নেয়। |
-| File storage | Default-ভাবে random filename, `overwrite: false`, extension allowlist এবং 50 MB limit। `save` option-এ `saveAs` ব্যবহার হয় (`as` নয়)। `download`/`downloadAs`/`getUploadFile` path-গুলো `baseDir` থেকে resolve করে। `UploadFileFromRequest`-এর `dest` এখন একটি string path। |
-| Events | `dispatch` একটি `MeghEvent` instance নেয়। Kafka এবং RabbitMQ broadcast exception throw করে। Socket broadcast-এর জন্য `useSocketIo()` লাগে। `getListeners` একটি class বা event নেয়, এবং `flushOnce` সরিয়ে ফেলা হয়েছে। |
-| Queues | `@MeghWorker` আর import-এর সময় চালু হয় না; `app.useWorker([...])` দিয়ে register করুন। |
-| Cache | Memory store প্রতিটি instance-এর জন্য আলাদা এবং TTL কার্যকর করা হয়। |
-| Logging | Default-ভাবে JSON; pretty output শুধু development-এ, `pino-pretty` install থাকলে। |
-| Results | `Results.Ok(x)` এখন `{ headers, data, statusCode }` হিসেবে serialize হয়। |
-| সরানো export | `registerKnex`, `FEATURE_KEY`, `uuid`, `getLineNumber`, `MatchLocation`, `extrctParamFromUrl`, `findDuplicates`, `isClassValidator`, `validateRequestBody`, `OkOptions`, `Results.code`, `KafkaBroadcastOption`, `RabbitMqBroadcastOption`, এবং `ControllerOptions.version`/`since`/`meta`। |
+| Area          | পরিবর্তন                                                                                                                                                                                                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Dependencies  | `@fastify/cors`, `@fastify/multipart`, `@fastify/static`, `@fastify/swagger`, `@fastify/swagger-ui`, `@scalar/fastify-api-reference`, `fastify-socket.io`, `class-validator`, `class-transformer` এবং `pino-pretty` এখন peer dependency। আপনি যেগুলো ব্যবহার করেন সেগুলো install করুন ([table](#optional-dependencies))। |
+| Package       | শুধু CommonJS, একটি `exports` map-সহ। Deep import (`@meghjs/core/dist/...`) আর resolve হয় না। License এখন MIT।                                                                                                                                                                                                          |
+| Environment   | `isDevelopment()`-এর জন্য `NODE_ENV=development` লাগে; সেট না থাকলে এখন production বোঝায়।                                                                                                                                                                                                                               |
+| Authorization | `@Authorized` deny-by-default। যে authorizer `false` return করে, সেটি এখন access নিষেধ করে। `AuthorizeMiddleware`, `AppAuthorization`, `AuthHandler` এবং `AuthReturnTypes` সরিয়ে ফেলা হয়েছে। একটি `authorize()` method-সহ সাধারণ `@CanAuthorize` class ব্যবহার করুন।                                                   |
+| Validation    | অজানা DTO property 400 দিয়ে প্রত্যাখ্যান করা হয়। Handler-গুলো DTO instance পায়। Error body এখন `{ code, status, message, errors[] }` (আগে ছিল `{ code, error: "ValidationError", errors }`)।                                                                                                                          |
+| Pagination    | সব paginator `{ data, meta: { total, page, perPage, lastPage, next, prev } }` return করে এবং `{ page, perPage }` নেয়।                                                                                                                                                                                                   |
+| File storage  | Default-ভাবে random filename, `overwrite: false`, extension allowlist এবং 50 MB limit। `save` option-এ `saveAs` ব্যবহার হয় (`as` নয়)। `download`/`downloadAs`/`getUploadFile` path-গুলো `baseDir` থেকে resolve করে। `UploadFileFromRequest`-এর `dest` এখন একটি string path।                                            |
+| Events        | `dispatch` একটি `MeghEvent` instance নেয়। Kafka এবং RabbitMQ broadcast exception throw করে। Socket broadcast-এর জন্য `useSocketIo()` লাগে। `getListeners` একটি class বা event নেয়, এবং `flushOnce` সরিয়ে ফেলা হয়েছে।                                                                                                 |
+| Queues        | `@MeghWorker` আর import-এর সময় চালু হয় না; `app.useWorker([...])` দিয়ে register করুন।                                                                                                                                                                                                                                 |
+| Cache         | Memory store প্রতিটি instance-এর জন্য আলাদা এবং TTL কার্যকর করা হয়।                                                                                                                                                                                                                                                     |
+| Logging       | Default-ভাবে JSON; pretty output শুধু development-এ, `pino-pretty` install থাকলে।                                                                                                                                                                                                                                        |
+| Results       | `Results.Ok(x)` এখন `{ headers, data, statusCode }` হিসেবে serialize হয়।                                                                                                                                                                                                                                                |
+| সরানো export  | `registerKnex`, `FEATURE_KEY`, `uuid`, `getLineNumber`, `MatchLocation`, `extrctParamFromUrl`, `findDuplicates`, `isClassValidator`, `validateRequestBody`, `OkOptions`, `Results.code`, `KafkaBroadcastOption`, `RabbitMqBroadcastOption`, এবং `ControllerOptions.version`/`since`/`meta`।                              |
 
 ---
 
@@ -1219,8 +1301,6 @@ Redis ছাড়াই job dispatch করে এমন code test করতে
 
 এগুলো 0.3.0-এর regression বা ঘাটতি, যেগুলো একটি patch release-এ ঠিক হওয়ার কথা:
 
-- **`@UseMiddleware(SomeClass)` `app.run()`-কে crash করায়।** একটি instance পাস করুন,
-  `@UseMiddleware(new SomeClass())`, অথবা `app.useMiddlewares()` ব্যবহার করুন।
 - **স্পষ্ট constructor ছাড়া `@Repository` এবং `@Queue` class dependency
   injection-এর অধীনে ভেঙে যায়।** `constructor() { super(); }` যোগ করুন।
 - **`Results.Created`, `Results.NoContent`,
@@ -1237,129 +1317,14 @@ Redis ছাড়াই job dispatch করে এমন code test করতে
 
 ## Roadmap to 1.0.0
 
-1.0.0 হবে stable API-সহ প্রথম release: এর পরে breaking change-গুলো 2.0-এর জন্য
-অপেক্ষা করবে। এই তালিকাগুলো দেখায় কী কী যুক্ত হয়েছে এবং কী এখনও 1.0.0-কে আটকে রেখেছে।
+1.0.0 হবে stable API-সহ প্রথম release। তার আগ পর্যন্ত minor release-এ
+(0.6, 0.7, …) breaking change থাকতে পারে, প্রতিটির সাথে একটি upgrade guide থাকে।
 
-### সম্পন্ন
-
-**Security**
-
-- [x] `@Authorized` deny-by-default, এবং `false` return করা authorizer 403 দেয়
-- [x] Handler-গুলো validate করা DTO পায়; অজানা property প্রত্যাখ্যান করা হয় (mass-assignment protection)
-- [x] File storage প্রতিটি read, write এবং delete `baseDir`-এর মধ্যে সীমাবদ্ধ রাখে, sibling-prefix এবং symlink escape-সহ
-- [x] Upload করা file random নাম পায়, overwrite করে না, এবং একটি extension allowlist ও size limit দিয়ে যাচাই করা হয়
-- [x] `UploadFileFromRequest`-এ path traversal বন্ধ করা হয়েছে
-- [x] `Content-Disposition` header injection বন্ধ করা হয়েছে
-- [x] Credential আর log করা হয় না, production-এ 5xx-এর বিস্তারিত লুকানো থাকে, এবং dev mode-এর জন্য `NODE_ENV=development` লাগে
-- [x] একসাথে চলা request-গুলো আর `FileStorage`-এর transform setting share করে না
-
-**Correctness**
-
-- [x] Built-in `Validator` `0` গ্রহণ করে এবং `min` / `max` / `exact` / `optional` কার্যকর করে
-- [x] Decorator metadata না থাকলে (tsx, esbuild, SWC) আর crash হয় না; `@Body({ type })` type দেয়
-- [x] TypeORM query operator runtime-এ কাজ করে
-- [x] `MeghRepository.transaction()` transaction-এর ভেতরে চলে, এবং `useTypeORM()`-এর পরে `@InjectRepository` কাজ করে
-- [x] Collection fix: `paginate`, `min`, `findAsync`
-- [x] Collection, TypeORM এবং Knex জুড়ে একটিই pagination কাঠামো
-- [x] Class দিয়ে চিহ্নিত event, ঠিক একবার চলা `once` listener, queue-তে থাকলে `delay` মানা হয়, ব্যর্থ job রাখা হয়
-- [x] Scheduler decorator আর parent class-এ ছড়িয়ে পড়ে না
-- [x] In-memory cache TTL কার্যকর করে; Redis tag set-এর মেয়াদ শেষ হয়
-- [x] Production-এ JSON log; framework-এর log `LoggerService`-এর মাধ্যমে যায়
-- [x] Class instantiate না করেই OpenAPI component schema generate হয়
-
-**Features**
-
-- [x] Producer-only queue (`worker: false`) এবং এমন worker যেগুলো আর import-এর সময় চালু হয় না
-- [x] Test-এর জন্য in-memory `memory` এবং `sync` queue driver
-- [x] `Results.Created` / `NoContent` / `OkStream` এবং `@HttpCode` API (এখনও প্রয়োগ হয় না; নিচে দেখুন)
-
-**Packaging ও tooling**
-
-- [x] একটি `exports` map এবং `sideEffects`-সহ শুধু CommonJS build
-- [x] Integration-গুলো optional peer dependency-তে সরানো হয়েছে
-- [x] 1.0-এর জন্য typedi-কে `MeghContainer`-এর পেছনে রাখা; পরের কোনো minor release-এ এটি বদলানো যেতে পারে
-- [x] MIT license file `package.json`-এর সাথে মেলে
-- [x] rimraf ছাড়া build, ESLint/Jest config ঠিক করা, husky 9, default-ভাবে coverage বন্ধ
-- [x] Node 22 এবং 24-এ CI (typecheck, lint, test, build) এবং tag-based publish workflow
-- [x] Request-pipeline integration test
-
-**Documentation**
-
-- [x] বর্তমান API-এর জন্য README এবং documentation site নতুন করে লেখা হয়েছে, একটি upgrade guide-সহ
-- [x] নতুন page: authentication, file uploads, caching, logging
-- [x] Documentation site VitePress-এ সরানো হয়েছে, template link সরানো হয়েছে এবং বানান ভুল ঠিক করা হয়েছে
-
-### 1.0.0-এর জন্য বাকি
-
-**0.3.0-এর regression** ([known issues](#known-issues-in-030) দেখুন)
-
-- [ ] `@UseMiddleware(SomeClass)` boot-এ crash করায়
-- [ ] constructor ছাড়া `@Repository` / `@Queue` class DI-এর অধীনে ভেঙে যায়
-- [ ] `Results`, `HttpResponse.Created` এবং `@HttpCode`-এর status code প্রয়োগ করা
-- [ ] `@Body()` / `@Query()` DTO schema আবার OpenAPI document-এ যুক্ত করা
-- [ ] Upload policy লঙ্ঘনে 500 নয়, 400 / 413 return করা উচিত
-
-**Core correctness**
-
-- [ ] `useScheduler({ path })` `run()`-কে crash করায় (ভুল `require` path)
-- [ ] `@UploadFile` / `@UploadFiles` `saveRequestFiles()`-এর জন্য await করে না
-- [ ] `@All()` registration-এর সময় crash করে
-- [ ] HTTP exception নয় এমন error-এর ক্ষেত্রে `error.statusCode` (401, 413, 415, 429, …) মেনে চলা
-- [ ] একটি সামঞ্জস্যপূর্ণ middleware ক্রম; `@UseMiddleware` DI-এর মাধ্যমে resolve করা
-- [ ] Route metadata cache `constructor.name` দিয়ে চিহ্নিত, তাই একই নামের class-গুলোর মধ্যে collision হয়
-- [ ] Controller discovery: `_resolveControllerDir` তার argument উপেক্ষা করে এবং path-এর প্রথম `src` বদলে দেয়; বারবার `useControllers` call একে অপরকে override করে
-- [ ] Functional route: `mapPatch` যোগ করা, এবং authentication, DI ও standard error কাঠামো চালু করা
-- [ ] `run()`-এর `host` option (container-এ default `0.0.0.0`)
-- [ ] Graceful shutdown: `process.exit(0)`-এর বদলে `app.close()` এবং একটি drain timeout-সহ TypeORM, Knex, Redis ও Socket.IO বন্ধ করা
-- [ ] `PartialType` / `OmitType` / `PickType` class-validator rule-গুলো ঠিকভাবে বহন করে না
-- [ ] Scalar `spec.content` spec-এর বদলে plugin module return করে
-- [ ] `Environment` প্রতিটি `get()`-এ `.env` আবার পড়ে, এবং `dotenv` import-এর সময় load হয়
-- [ ] Socket handler-এর error unhandled rejection হয়ে যায়
-- [ ] `@MeghWorker`-এর `autoStart` app boot-এর সাথে যুক্ত নয়
-- [ ] optional peer হওয়া সত্ত্বেও `class-validator` / `class-transformer` import-এর সময় load হয়
-
-**Missing features**
-
-- [ ] `use*` option হিসেবে security header (helmet) এবং rate limiting
-- [ ] Health এবং readiness endpoint
-- [ ] Log-এ request ID, এবং logger-কে Fastify-এর সাথে যুক্ত করা
-- [ ] Handler থেকে redirect এবং response header
-- [ ] Pluggable error handler / exception filter
-- [x] Lifecycle hook (`onInit`, `onReady`, `onClose`, `app.close()`)
-- [ ] Boot-এর সময় config schema validation
-- [ ] Global route prefix এবং API versioning
-- [ ] Compression
-- [ ] Socket.IO handshake authentication এবং per-channel authorization
-
-**API cleanup** (1.0-এর API একটি প্রতিশ্রুতি)
-
-- [ ] No-op `useHttps()`, `useSerialization()` এবং `mapFeatures()` সম্পূর্ণ করা বা সরিয়ে ফেলা
-- [x] TypeORM এবং Knex-কে `@meghjs/data` plugin-এ সরানো, এবং deprecated `useDatasource()` সরিয়ে ফেলা
-- [ ] `MeghSocketIo` stub এবং অব্যবহৃত adapter type সরিয়ে ফেলা
-- [ ] `KnexHooks` / `KnexHooksFactory`, `DuplicateRouteException`, `mapRoute()` এবং `registerMiddleware()` সরিয়ে ফেলা
-- [x] Public index থেকে `mock-db` export বন্ধ করা, এবং Jest type ছাড়া build করা
-- [ ] বাকি `console.log` call-গুলো logger দিয়ে বদলানো
-
-**Tests**
-
-- [ ] `application.ts`: `run()`, shutdown, controller auto-discovery, `useScheduler({ path })`
-- [ ] Events, scheduler, worker, Redis cache, `testing.ts`, `map-types.ts`, config
-- [ ] ফাঁপা test এবং `MeghTest` ঠিক করা (`from()` race, global container mutation)
-- [ ] Coverage threshold
-
-**CLI** (`@meghjs/cli`, নতুন করে লেখা চলছে)
-
-- [ ] commander-based rewrite সম্পূর্ণ করা: `--help` / `--version`, সামঞ্জস্যপূর্ণ flag ও naming, existing project overwrite করতে অস্বীকার করা
-- [ ] Generate করা code `@meghjs/core`-এর সাথে compile হয়
-- [ ] CLI test (প্রতিটি `make:*` command-এর জন্য snapshot)
-- [ ] core-এর সাথে মিলিয়ে version-সহ release
-
-**Documentation ও release**
-
-- [ ] Configuration, scheduler, testing, dependency injection, response, deployment এবং security hardening-এর জন্য page
-- [ ] API reference এবং FAQ
-- [ ] Contributor guide: project-এর কাঠামো, এবং CLI-generated code যে export-গুলোর ওপর নির্ভর করে
-- [ ] core, CLI এবং documentation জুড়ে changelog এবং একটি versioning policy
+1.0.0-এর বাকি কাজ [`1.0.0` milestone](https://github.com/meghjs/megh/milestone/1)-এ
+issue হিসেবে track করা হয়, আর সংক্ষেপে আছে
+[`1.0-CHECKLIST.md`](https://github.com/meghjs/megh/blob/main/1.0-CHECKLIST.md)-এ।
+বাকি আছে মূলত core-এর correctness fix, security header, rate limiting ও
+compression, global route prefix, test, এবং public API ছোট করা।
 
 ---
 
@@ -1367,14 +1332,14 @@ Redis ছাড়াই job dispatch করে এমন code test করতে
 
 এই monorepo-তে প্রতিটি Megh package এবং docs site-এর source রাখা আছে, যাতে framework, এর CLI template এবং এর documentation-এর পরিবর্তন একটি commit-এই যুক্ত করা যায়।
 
-| Folder           | Package / site                                                | যেখান থেকে publish হয়                                                         |
-|------------------|---------------------------------------------------------------|--------------------------------------------------------------------------------|
-| `packages/core/` | [`@meghjs/core`](https://www.npmjs.com/package/@meghjs/core)  | এই repository (Lerna)                                                        |
-| `packages/cli/`  | [`@meghjs/cli`](https://www.npmjs.com/package/@meghjs/cli)    | এই repository (Lerna)                                                        |
-| `packages/data/` | [`@meghjs/data`](https://www.npmjs.com/package/@meghjs/data)  | এই repository (Lerna)                                                        |
-| `docs/`          | https://meghjs.github.io (VitePress)                        | [meghjs/meghjs.github.io](https://github.com/meghjs/meghjs.github.io)  |
-| `resources/`     | Logo এবং favicon                                              | প্রযোজ্য নয়                                                                   |
-| `scripts/`       | `mirror.sh`, যা `docs/`-কে এর আলাদা repository-র সাথে sync করে | প্রযোজ্য নয়                                                                   |
+| Folder           | Package / site                                                 | যেখান থেকে publish হয়                                                |
+| ---------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `packages/core/` | [`@meghjs/core`](https://www.npmjs.com/package/@meghjs/core)   | এই repository (Lerna)                                                 |
+| `packages/cli/`  | [`@meghjs/cli`](https://www.npmjs.com/package/@meghjs/cli)     | এই repository (Lerna)                                                 |
+| `packages/data/` | [`@meghjs/data`](https://www.npmjs.com/package/@meghjs/data)   | এই repository (Lerna)                                                 |
+| `docs/`          | https://meghjs.github.io (VitePress)                           | [meghjs/meghjs.github.io](https://github.com/meghjs/meghjs.github.io) |
+| `resources/`     | Logo এবং favicon                                               | প্রযোজ্য নয়                                                          |
+| `scripts/`       | `mirror.sh`, যা `docs/`-কে এর আলাদা repository-র সাথে sync করে | প্রযোজ্য নয়                                                          |
 
 `1.0-CHECKLIST.md` 1.0 release-এর কাজের হিসাব রাখে; বর্তমান roadmap নিচে [Roadmap to 1.0.0](#roadmap-to-100)-এ দেওয়া আছে।
 
@@ -1420,7 +1385,7 @@ Docs site এখনো তার আলাদা repository থেকে deploy 
 
 ## Release ও versioning
 
-- **Semver।** Patch release bug ঠিক করে। Minor release backward-compatible feature যোগ করে। Breaking change-গুলো পরের major release-এর জন্য অপেক্ষা করে এবং তার আগে অন্তত একটি minor release-এ (warning-সহ) deprecated থাকে, যদি না পরিবর্তনটি কোনো security সমস্যা ঠিক করে।
+- **Semver।** 1.0-এর আগে minor release-এ (`0.5` → `0.6`) breaking change থাকতে পারে, patch release-এ নয়। 1.0 থেকে breaking change পরের major release-এর জন্য অপেক্ষা করে এবং তার আগে একটি minor release-এ deprecated থাকে। দেখুন [versioning policy](https://meghjs.github.io/reference/versioning)।
 - **Release-এর ক্রম।** `core` এবং `cli` একই version-এ একসাথে release করা হয়। এরপর `docs`-এ version update করুন।
 
 ---

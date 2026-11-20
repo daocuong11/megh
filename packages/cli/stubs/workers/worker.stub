@@ -1,0 +1,33 @@
+import { Job, MeghWorker, MeghWorkerBase } from '@meghjs/core';
+
+/** The data each job on the "{QueueName}" queue carries. */
+export type {Base}Payload = {
+  id: number; // replace with what the job needs
+};
+
+/**
+ * Processes jobs on the "{QueueName}" queue, which another part of the system
+ * (or another service) fills.
+ *
+ * Register it in src/app.ts so it starts: `app.useWorker([{ClassName}])`.
+ */
+@MeghWorker({
+  queue: '{QueueName}',
+  concurrency: 1,
+  // Redis defaults to 127.0.0.1:6379. To change it:
+  // connection: { host: 'redis.internal', port: 6379 },
+})
+export class {ClassName} extends MeghWorkerBase<{Base}Payload> {
+  /** Handle one job. Throw to fail it; the return value is the job's result. */
+  async process(job: Job<{Base}Payload>) {
+    // job.data is the payload
+  }
+
+  onCompleted(job: Job<{Base}Payload>) {
+    // Runs after process() succeeds.
+  }
+
+  onFailed(job: Job<{Base}Payload> | undefined, error: Error) {
+    // Runs after process() throws. Failed jobs are always logged too.
+  }
+}

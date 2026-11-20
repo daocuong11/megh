@@ -9,6 +9,8 @@
  */
 import { castFromDatabase, castToDatabase, sameValue } from "./casts";
 import { getConnection } from "./connection";
+import { columnNames } from "./decorators";
+import { columnName, toColumns, toProperties } from "./naming";
 import { getRelations } from "./relations";
 import type { ModelClass } from "./types";
 
@@ -45,7 +47,7 @@ export function hydrate<M>(
       delete instance[key];
     }
   }
-  const values = cast ? castFromDatabase(cls, row) : row;
+  const values = cast ? castFromDatabase(cls, toProperties(cls, row)) : row;
   Object.assign(instance, values);
   markPersisted(instance, values);
   return instance;
@@ -76,10 +78,22 @@ export function markDeleted(instance: object) {
   states.set(instance, { ...state, exists: false });
 }
 
-/** The instance's column values: own fields that are not relations. */
+/**
+ * The instance's column values: its decorated columns, or for models
+ * without column decorators, own fields that are not relations.
+ */
 export function columnValues(instance: object): Record<string, unknown> {
-  const relations = getRelations(instance.constructor as ModelClass);
+  const cls = instance.constructor as ModelClass;
   const out: Record<string, unknown> = {};
+  const declared = columnNames(cls);
+  if (declared) {
+    for (const key of declared) {
+      const value = (instance as Record<string, unknown>)[key];
+      if (value !== undefined) out[key] = value;
+    }
+    return out;
+  }
+  const relations = getRelations(cls);
   for (const [key, value] of Object.entries(instance)) {
     if (value !== undefined && !relations.has(key)) out[key] = value;
   }
@@ -106,16 +120,16 @@ export function withTimestamps(
   if (!cls.timestamps) return values;
   const now = new Date();
   const out = { ...values };
-  if (on === "insert") out[cls.createdAt] ??= now;
-  out[cls.updatedAt] ??= now;
+  if (on === "insert" && cls.createdAt) out[cls.createdAt] ??= now;
+  if (cls.updatedAt) out[cls.updatedAt] ??= now;
   return out;
 }
 
 /**
  * Insert `values` (model form) into the model's table and return the stored
  * row, cast to model form. Fills timestamps. Uses `RETURNING` where the
- * dialect has it (Postgres, SQLite, MSSQL) and reads the row back by its id
- * otherwise (MySQL).
+ * dialect has it (Postgres, SQLite), `OUTPUT inserted.*` on SQL Server, and
+ * reads the row back by its id otherwise (MySQL).
  */
 export async function insertRow(
   cls: ModelClass,
@@ -123,26 +137,40 @@ export async function insertRow(
 ): Promise<Record<string, unknown>> {
   const db = getConnection();
   const table = tableOf(cls);
-  const data = castToDatabase(cls, withTimestamps(cls, values, "insert"), db);
-  if (db.getExecutor().adapter.supportsReturning) {
+  const pk = columnName(cls, cls.primaryKey);
+  const data = toColumns(
+    cls,
+    castToDatabase(cls, withTimestamps(cls, values, "insert"), db),
+  );
+  const adapter = db.getExecutor().adapter;
+  if (adapter.supportsOutput) {
+    // SQL Server has no RETURNING and its driver gives no insertId.
+    const row = await db
+      .insertInto(table)
+      .values(data)
+      .outputAll("inserted")
+      .executeTakeFirstOrThrow();
+    return castFromDatabase(cls, toProperties(cls, row as any));
+  }
+  if (adapter.supportsReturning) {
     const row = await db
       .insertInto(table)
       .values(data)
       .returningAll()
       .executeTakeFirstOrThrow();
-    return castFromDatabase(cls, row);
+    return castFromDatabase(cls, toProperties(cls, row));
   }
   const result = await db
     .insertInto(table)
     .values(data)
     .executeTakeFirstOrThrow();
-  const id = data[cls.primaryKey] ?? Number(result.insertId);
+  const id = data[pk] ?? Number(result.insertId);
   const row = await db
     .selectFrom(table)
     .selectAll()
-    .where(cls.primaryKey, "=", id)
+    .where(pk, "=", id)
     .executeTakeFirstOrThrow();
-  return castFromDatabase(cls, row);
+  return castFromDatabase(cls, toProperties(cls, row));
 }
 
 /** Update the row with primary key `id`. `values` are in model form. */
@@ -154,7 +182,7 @@ export async function updateRow(
   const db = getConnection();
   await db
     .updateTable(tableOf(cls))
-    .set(castToDatabase(cls, values, db))
-    .where(cls.primaryKey, "=", id)
+    .set(toColumns(cls, castToDatabase(cls, values, db)))
+    .where(columnName(cls, cls.primaryKey), "=", id)
     .execute();
 }

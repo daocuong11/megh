@@ -8,3 +8,5 @@ export * from "./results";
 export * from "./validation";
 export * from "./validator-extend";
 export * from "./map-types";
+export { Version } from "./versioning";
+export type { VersioningOptions } from "./versioning";

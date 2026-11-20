@@ -1,0 +1,19 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { MeghTest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  let service: {ClassName};
+
+  beforeEach(() => {
+    service = MeghTest.getProvider({ClassName});
+  });
+
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
+
+  it('sayHello() says hello', () => {
+    expect(service.sayHello()).toBe('Hello World!');
+  });
+});

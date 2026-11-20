@@ -1,5 +1,5 @@
 import { Container, Injectable } from "../di";
-import type { Socket, ServerOptions, Server } from "socket.io";
+import type { Socket } from "socket.io";
 import { SocketIoServer } from "../realtime/websocket";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sleep } from "../common/helpers";
@@ -8,8 +8,8 @@ import { sleep } from "../common/helpers";
 export class SocketContextService {
   private readonly storage = new AsyncLocalStorage<{ socket: Socket }>();
 
-  run(socket: Socket, fn: () => void | Promise<void>) {
-    this.storage.run({ socket }, fn);
+  run(socket: Socket, fn: () => void | Promise<void>): void | Promise<void> {
+    return this.storage.run({ socket }, fn);
   }
 
   getSocket(): Socket | undefined {
@@ -27,8 +27,6 @@ export type DispatchOptions = {
 
 @Injectable()
 export class SocketEventDispatcher {
-  constructor(private readonly _context: SocketContextService) {}
-
   async dispatch<T = any>(
     event: string,
     data: T,

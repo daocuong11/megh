@@ -33,11 +33,12 @@ Megh is a TypeScript-first web framework built on top of [Fastify](https://fasti
   - [Logging](#logging)
   - [OpenAPI Documentation](#openapi-documentation)
 - [Advanced Features](#advanced-features)
-  - [MeghORM](#models-orm)
+  - [MeghORM](#meghorm)
   - [Database](#database)
   - [Pagination](#pagination)
   - [Events](#events)
   - [Queues & Workers](#queues--workers)
+  - [Mail](#mail)
   - [Task Scheduling](#task-scheduling)
   - [Caching](#caching)
   - [File Uploads](#file-uploads)
@@ -56,17 +57,20 @@ Megh is a TypeScript-first web framework built on top of [Fastify](https://fasti
 ## Features
 
 - 🎯 **Decorator-based routing** — define controllers and routes with TypeScript decorators
-- 💉 **Dependency injection** — `MeghContainer`, `@Injectable` and `Token`, currently backed by [TypeDI](https://github.com/typestack/typedi)
+- 💉 **Dependency injection** — `MeghContainer`, `@Injectable` and `Token`, on Megh's own container (no third-party DI library)
 - 📄 **OpenAPI / Swagger** — automatic docs with Swagger UI or [Scalar](https://scalar.com)
-- ✅ **Validation** — request DTOs validated and whitelisted via [class-validator](https://github.com/typestack/class-validator)
+- ✅ **Validation** — request DTOs validated and whitelisted, with Megh's own compiled decorators or [class-validator](https://github.com/typestack/class-validator)
+- 🚨 **Error handling** — HTTP exceptions and pluggable exception filters
+- ❤️ **Health checks & request IDs** — `/health` and `/ready` probes, an `x-request-id` on every response and log line
 - 🔑 **Authentication** — pluggable handler that populates `request.user`
 - 🔒 **Authorization** — deny-by-default `@Authorized` routes
 - 📁 **File uploads** — multipart support with safe, confined storage
-- 🧬 **Models & migrations** — type-safe, Eloquent-style models and migrations built on [Kysely](https://kysely.dev)
+- 🧬 **Models & migrations** — decorator models, a query builder and a schema builder for migrations, all type-safe
 - 🗄️ **Database** — TypeORM and Knex integrations with one pagination shape
 - ⚙️ **Config** — typed, environment-aware config classes
 - 📣 **Events** — typed events with queued delivery and Socket.IO broadcast
 - 📬 **Queues & workers** — background jobs on [BullMQ](https://docs.bullmq.io), with in-memory drivers for tests
+- ✉️ **Mail** — mailable classes over SMTP, SendGrid, Mailgun, Postmark or Resend, sent now or queued, with a test fake
 - ⏰ **Task scheduling** — cron, interval and timeout jobs
 - 🗃️ **Caching** — in-memory or Redis, with TTL and tag-based invalidation
 - 📝 **Logging** — structured JSON logs via [pino](https://getpino.io)
@@ -115,21 +119,22 @@ Megh keeps integrations out of the core install. Add only what you use. The
 package imports fine without any of them, and you get a clear error the moment a
 feature needs one:
 
-| Feature                                      | Install                                                                           |
-| -------------------------------------------- | --------------------------------------------------------------------------------- |
-| CORS (`useCors`)                             | `npm i @fastify/cors`                                                             |
-| File uploads (`useMultipart`, `@UploadFile`) | `npm i @fastify/multipart`                                                        |
-| Static files (`useStaticFiles`)              | `npm i @fastify/static`                                                           |
-| OpenAPI with Swagger UI                      | `npm i @fastify/swagger @fastify/swagger-ui`                                      |
-| OpenAPI with Scalar                          | `npm i @fastify/swagger @scalar/fastify-api-reference`                            |
-| Models and migrations (`useDatabase`)        | `npm i kysely` + a driver (`pg`, `mysql2`, `better-sqlite3`)                      |
-| TypeORM                                      | `npm i typeorm` + a driver (`pg`, `mysql2`, `sqlite3`, `better-sqlite3`, `mssql`) |
-| Knex                                         | `npm i knex` + a driver                                                           |
-| Queues & workers                             | `npm i bullmq ioredis` (not needed with the `memory`/`sync` drivers)              |
-| Redis cache                                  | `npm i ioredis`                                                                   |
-| WebSocket                                    | `npm i socket.io fastify-socket.io`                                               |
-| Image transforms in `FileStorage`            | `npm i sharp`                                                                     |
-| Pretty dev logs                              | `npm i -D pino-pretty`                                                            |
+| Feature                                      | Install                                                                              |
+| -------------------------------------------- | ------------------------------------------------------------------------------------ |
+| CORS (`useCors`)                             | `npm i @fastify/cors`                                                                |
+| File uploads (`useMultipart`, `@UploadFile`) | `npm i @fastify/multipart`                                                           |
+| Static files (`useStaticFiles`)              | `npm i @fastify/static`                                                              |
+| OpenAPI with Swagger UI                      | `npm i @fastify/swagger @fastify/swagger-ui`                                         |
+| OpenAPI with Scalar                          | `npm i @fastify/swagger @scalar/fastify-api-reference`                               |
+| MeghORM (`useMeghORM`)                       | a driver (`pg`, `mysql2`, `better-sqlite3`, or `tedious tarn`)                       |
+| TypeORM                                      | `npm i typeorm` + a driver (`pg`, `mysql2`, `sqlite3`, `better-sqlite3`, `mssql`)    |
+| Knex                                         | `npm i knex` + a driver                                                              |
+| Queues & workers                             | `npm i bullmq ioredis` (not needed with the `memory`/`sync` drivers)                 |
+| Mail over SMTP                               | `npm i nodemailer` (the SendGrid, Mailgun, Postmark and Resend mailers need nothing) |
+| Redis cache                                  | `npm i ioredis`                                                                      |
+| WebSocket                                    | `npm i socket.io fastify-socket.io`                                                  |
+| Image transforms in `FileStorage`            | `npm i sharp`                                                                        |
+| Pretty dev logs                              | `npm i -D pino-pretty`                                                               |
 
 ### Module format
 
@@ -289,6 +294,11 @@ Error responses have the shape `{ code, status: "Error", message, data? }`.
 Outside development, 5xx responses hide the message and data and return
 `"Internal Server Error"`.
 
+To change how errors are turned into responses, register exception filters
+with `@Catch`, `@UseFilters` or `app.useExceptionFilters()`, or replace the
+handler with `app.useErrorHandler()`. See
+[Error Handling](https://meghjs.github.io/core-concept/error-handling).
+
 ---
 
 ### Middleware
@@ -308,20 +318,19 @@ class LoggingMiddleware extends MeghMiddleware {
 app.useMiddlewares([LoggingMiddleware]);
 ```
 
-Scope middleware to a controller or route with `@UseMiddleware`. In 0.3.0, pass
-an **instance**. The class form crashes at boot (see
-[Known Issues](#known-issues-in-030)):
+Scope middleware to a controller or route with `@UseMiddleware`. Classes are
+resolved through DI, so they can use constructor injection. Instances work too:
 
 ```typescript
 // Apply to entire controller
-@UseMiddleware(new LoggingMiddleware())
+@UseMiddleware(LoggingMiddleware)
 @ApiController('/users')
 class UserController { ... }
 
 // Or apply to a specific route
 @ApiController('/users')
 class UserController {
-  @UseMiddleware(new LoggingMiddleware())
+  @UseMiddleware([LoggingMiddleware, new RateLimitMiddleware(100)])
   @Get('/')
   getAll() { ... }
 }
@@ -330,11 +339,15 @@ class UserController {
 Requests pass through these stages in order:
 
 1. Global middlewares (`useMiddlewares`)
-2. Authentication
-3. Class `@Authorized`, then method `@Authorized`
-4. Class `@UseMiddleware`, then method `@UseMiddleware`
-5. Parameter validation
+2. Class `@UseMiddleware`, then method `@UseMiddleware`
+3. Authentication (sets `request.user`)
+4. Class `@Authorized`, then method `@Authorized`
+5. Parameter and DTO validation
 6. Handler
+
+Middleware runs before authentication, so it can reject a request early but
+cannot read `request.user`. Inline routes follow the same order. (Before
+0.5.5, `@UseMiddleware` ran after `@Authorized`.)
 
 ---
 
@@ -440,10 +453,15 @@ under that name makes `app.run()` fail.
 
 ### Validation
 
-Validation is powered by `class-validator`. Decorate your DTOs and Megh validates `@Body()` and `@Query()` automatically:
+Decorate your DTOs and Megh validates `@Body()` and `@Query()` automatically.
+The decorators come from `@meghjs/core`, with the same names, options and
+messages as `class-validator`, and each DTO is compiled once into a single
+function, so validation is several times faster. DTOs written with
+`class-validator` keep working; switching is a change of import. See
+[Validation](https://meghjs.github.io/core-concept/validation).
 
 ```typescript
-import { IsString, IsNotEmpty, IsEmail, IsInt, Min, Max, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsEmail, IsInt, Min, Max, IsOptional } from '@meghjs/core';
 
 class CreateUserDto {
   @IsString()
@@ -580,15 +598,21 @@ app.useOpenApi({
 **Config class:**
 
 ```typescript
-import { AppConfig, MeghConfig, Environment } from "@meghjs/core";
+import {
+  AppConfig,
+  MeghConfig,
+  Environment,
+  OpenApiUiOptions,
+} from "@meghjs/core";
 
 @AppConfig
-export class OpenApiConfig extends MeghConfig {
-  config(env: Environment) {
+export class OpenApiConfig extends MeghConfig<OpenApiUiOptions> {
+  config(env: Environment): OpenApiUiOptions {
     return {
       info: { title: "My API", version: "1.0.0" },
       routePrefix: "/docs",
       provider: "scalar", // or 'default' for Swagger UI
+      auth: "bearer", // marks @Authorized routes, for the "Authorize" button
     };
   }
 }
@@ -602,7 +626,7 @@ if (app.isDevelopment()) {
 **Route-level docs with `@OpenApi`:**
 
 ```typescript
-import { OpenApi, OpenApiProperty, OpenApiSchema } from '@meghjs/core';
+import { ApiResponse, Authorized, OpenApi, OpenApiProperty, OpenApiSchema, Paginated } from '@meghjs/core';
 
 @OpenApiSchema()
 export class UserQuery {
@@ -615,24 +639,11 @@ export class UserQuery {
   page?: number;
 }
 
-@OpenApi({
-  summary: 'Get all users',
-  tags: ['users'],
-  security: [{ bearerAuth: [] }],
-  response: {
-    200: {
-      description: 'List of users',
-      type: 'object',
-      properties: {
-        data: { type: 'array' },
-        total: { type: 'integer', example: 100 },
-      },
-    },
-    401: { description: 'Unauthorized' },
-  },
-})
+@OpenApi({ summary: 'Get all users', tags: ['users'] })
+@ApiResponse(200, Paginated(User)) // a MeghORM model or a DTO: { data: User[], meta }
+@Authorized() // documents 401 and 403
 @Get('/')
-getAll(@Query() query: UserQuery) { ... }
+getAll(@Query() query: UserQuery) { ... } // the DTO documents the query and a 400
 ```
 
 Schemas are generated from decorated properties only, and nested DTOs become
@@ -644,34 +655,47 @@ Schemas are generated from decorated properties only, and nested DTOs become
 
 ### MeghORM
 
-Type-safe models built on [Kysely](https://kysely.dev): column names, value
-types and loaded relations are checked by TypeScript.
+Megh's own ORM: decorator models plus a query builder, with column names,
+value types and loaded relations checked by TypeScript. Kysely runs
+underneath; you never set it up.
 
 ```bash
-npm install kysely pg   # or: mysql2, better-sqlite3
+npm install pg   # or: mysql2, better-sqlite3, tedious tarn
 ```
 
 ```typescript
-import { Model, hasMany } from "@meghjs/core";
+import {
+  DB,
+  Model,
+  Table,
+  PrimaryKey,
+  AutoIncrement,
+  Column,
+  CreatedAt,
+  HasMany,
+} from "@meghjs/core";
 import { Post } from "./post.model";
 
+@Table("users")
 export class User extends Model {
-  static readonly table = "users";
+  @PrimaryKey() @AutoIncrement() id?: number;
+  @Column({ unique: true }) email!: string;
+  @Column({ nullable: true }) name!: string | null;
+  @CreatedAt() createdAt?: Date;
 
-  id!: number;
-  email!: string;
-  name!: string | null;
-
-  posts = hasMany(() => Post);
+  @HasMany(() => Post) posts?: Post[];
 }
 
-// app.ts
-app.useDatabase(db); // a Kysely instance
+// app.ts: no Kysely setup, no connection file
+app.useMeghORM(); // reads DATABASE_URL, or pass { dialect, host, ... }
 
 const users = await User.where("email", "like", "%@acme.io")
   .with("posts")
   .orderBy("name")
   .get();
+
+// or as a query builder
+const ids = await DB.table("users").where("active", true).pluck("id");
 ```
 
 Migrations live in `src/database/migrations` and run with the CLI:
@@ -681,8 +705,28 @@ npx megh make:migration create_users_table
 npx megh migrate
 ```
 
-Relations, timestamps, soft deletes, casts, transactions and the migration
-commands are covered in the [MeghORM guide](https://meghjs.github.io/advanced/orm).
+Seeders fill the database, and factories build rows with fake values from
+[Faker](https://fakerjs.dev):
+
+```bash
+npx megh make:factory user      # UserFactory, a Faker value per column
+npx megh make:seeder users      # await UserFactory.createMany(10)
+npx megh migrate --seed         # or: npx megh db:seed
+```
+
+Relations, timestamps, soft deletes, casts, transactions, migrations, seeding
+and factories are covered in the [MeghORM guide](https://meghjs.github.io/advanced/orm).
+
+Or scaffold whole tables, features and business domains from templates:
+
+```bash
+npx megh sc:auth --strategy jwt --roles multiple --permissions   # sign-up, sign-in, roles
+npx megh sc:domain ecommerce --resource                          # products, orders, payments, ...
+npx megh make:resource Ticket --fields "title,body,status:in(open|closed),user_id:cascade"
+```
+
+See [Scaffold](https://meghjs.github.io/cli/scaffold/) for the templates,
+fields, domains, auth and RBAC.
 
 ---
 
@@ -879,6 +923,48 @@ await waitForMemoryQueues(); // wait until all jobs finish
 resetMemoryQueues();
 ```
 
+### Mail
+
+Send email from **mailable** classes over SMTP ([Nodemailer](https://nodemailer.com)) or the SendGrid, Mailgun, Postmark and Resend APIs, straight away or from a queue.
+
+```ts
+// app.ts — settings come from MEGH_MAIL_* in .env
+app.useMail({ queue: true });
+
+// mail/welcome.mail.ts — npx megh make:mail Welcome
+export class WelcomeMail extends Mailable {
+  constructor(private readonly user: User) {
+    super();
+  }
+
+  envelope() {
+    return { subject: `Welcome, ${this.user.name}` };
+  }
+
+  content() {
+    return { html: `<p>Hi ${this.user.name}!</p>`, text: `Hi ${this.user.name}!` };
+  }
+}
+
+// any service
+constructor(private readonly mailer: Mailer) {}
+
+await this.mailer.to(user.email).send(new WelcomeMail(user));
+await this.mailer.to(user.email).later(60_000, new WelcomeMail(user)); // queued
+```
+
+```ini
+MEGH_MAIL_MAILER=smtp            # or sendgrid, mailgun, postmark, resend, failover, log
+MEGH_MAIL_HOST=smtp.example.com
+MEGH_MAIL_FROM_ADDRESS=hello@example.com
+```
+
+- With no mailer set, mail goes to the log in development; in production the app refuses to start.
+- `failover` tries mailers in order: `MEGH_MAIL_FAILOVER=sendgrid,smtp`.
+- `Mailer.fake()` records mail in tests: `mail.assertSent(WelcomeMail, (sent) => sent.hasTo(user.email))`.
+
+See the [Mail guide](https://meghjs.github.io/advanced/mail) for every option.
+
 ---
 
 ### Task Scheduling
@@ -974,8 +1060,20 @@ app.useMultipart({
 });
 ```
 
+`useMultipart()` passes its options to `@fastify/multipart`. Megh sets
+`attachFieldsToBody: true` (needed by `@UploadFile`) and a **10 MB** per-file
+limit unless you pass your own `limits`. The smaller of this limit and
+`FileStorage`'s `maxFileSize` (50 MB) wins, so raise both for bigger files.
+
 ```typescript
-import { FileStorage, UploadFile, MultipartFile, OpenApi } from "@meghjs/core";
+import {
+  ApiController,
+  Post,
+  FileStorage,
+  UploadFile,
+  MultipartFile,
+  OpenApi,
+} from "@meghjs/core";
 
 @ApiController("/files")
 class FileController {
@@ -1037,7 +1135,7 @@ import path from "path";
 
 // requires @fastify/static
 app.useStaticFiles({
-  path: path.join(process.cwd(), "public"),
+  root: path.join(process.cwd(), "public"),
   prefix: "/static/",
 });
 ```
@@ -1175,8 +1273,14 @@ dispatches jobs without Redis.
 - Set `NODE_ENV=production`. Unset also counts as production, but be explicit.
   Production mode hides 5xx details, writes JSON logs, and makes
   `app.isDevelopment()` false.
-- `app.run(port)` defaults to port 4000. It handles `SIGTERM`/`SIGINT` by
-  stopping the scheduler and closing registered workers before exiting.
+- `app.run(port)` defaults to `PORT`, else 4000, and listens on `HOST` or `0.0.0.0`
+  (`app.run(port, { host })` to change it). It handles `SIGTERM`/`SIGINT` by
+  stopping the scheduler, closing registered workers and the cache, and gives
+  up after `shutdownTimeout`.
+- Add `app.useSecurityHeaders()` and `app.useRateLimit()`. See
+  [Security Hardening](https://meghjs.github.io/production/security).
+- Add `app.useHealth()` for `/health` and `/ready` probes. See
+  [Health Checks](https://meghjs.github.io/advanced/health).
 - Register an authorizer if you use `@Authorized`; without one those routes
   return 403.
 
@@ -1206,147 +1310,30 @@ dispatches jobs without Redis.
 
 These are regressions or gaps in 0.3.0 that are expected to be fixed in a patch release:
 
-- **`@UseMiddleware(SomeClass)` crashes `app.run()`.** Pass an instance,
-  `@UseMiddleware(new SomeClass())`, or use `app.useMiddlewares()`.
 - **`@Repository` and `@Queue` classes without an explicit constructor break
   under dependency injection.** Add `constructor() { super(); }`.
 - **Status codes from `Results.Created`, `Results.NoContent`,
   `Results.NotFound`, `HttpResponse.Created` and `@HttpCode` are not applied.**
-  The response is 200. Throw `HttpExceptions` to send error statuses.
+  The response is 200. Throw `HttpExceptions` to send error statuses. Fixed in 0.5.5.
 - **`@Body()`/`@Query()` DTOs are missing from the generated OpenAPI document.**
   Validation still runs. Describe them with `@OpenApi({ requestBody, query })`
   for now.
-- **`@All()` crashes `app.run()`.**
+- **`@All()` crashes `app.run()`.** Fixed in 0.5.5.
 - **Upload policy violations return 500**, not 400 or 413.
-- **`app.run()` has no `host` option.** The server binds to localhost.
+- **`app.run()` has no `host` option.** The server binds to localhost. Fixed in 0.5.5.
 
 ---
 
 ## Roadmap to 1.0.0
 
-1.0.0 is the first release with a stable API: after it, breaking changes wait
-for 2.0. These lists track what has landed and what still blocks 1.0.0.
+1.0.0 is the first release with a stable API. Until then, minor releases
+(0.6, 0.7, …) can contain breaking changes, each with an upgrade guide.
 
-### Done
-
-**Security**
-
-- [x] `@Authorized` is deny-by-default, and an authorizer returning `false` gives 403
-- [x] Handlers receive the validated DTO; unknown properties are rejected (mass-assignment protection)
-- [x] File storage confines every read, write and delete to `baseDir`, including sibling-prefix and symlink escapes
-- [x] Uploads get random names, don't overwrite, and are checked against an extension allowlist and a size limit
-- [x] Path traversal in `UploadFileFromRequest` closed
-- [x] `Content-Disposition` header injection closed
-- [x] Credentials are no longer logged, and production hides 5xx details and requires `NODE_ENV=development` for dev mode
-- [x] Concurrent requests no longer share `FileStorage` transform settings
-
-**Correctness**
-
-- [x] Built-in `Validator` accepts `0` and enforces `min` / `max` / `exact` / `optional`
-- [x] Missing decorator metadata (tsx, esbuild, SWC) no longer crashes; `@Body({ type })` supplies the type
-- [x] TypeORM query operators work at runtime
-- [x] `MeghRepository.transaction()` runs inside the transaction, and `@InjectRepository` works after `useTypeORM()`
-- [x] Collection fixes: `paginate`, `min`, `findAsync`
-- [x] One pagination shape across Collection, TypeORM and Knex
-- [x] Events keyed by class, exactly-once `once` listeners, `delay` honoured when queued, failed jobs kept
-- [x] Scheduler decorators no longer leak into parent classes
-- [x] In-memory cache enforces TTL; Redis tag sets expire
-- [x] JSON logs in production; framework logs go through `LoggerService`
-- [x] OpenAPI component schemas generated without instantiating classes
-
-**Features**
-
-- [x] Producer-only queues (`worker: false`) and workers that no longer start on import
-- [x] In-memory `memory` and `sync` queue drivers for tests
-- [x] `Results.Created` / `NoContent` / `OkStream` and `@HttpCode` APIs (not yet applied; see below)
-
-**Packaging and tooling**
-
-- [x] CommonJS-only build with an `exports` map and `sideEffects`
-- [x] Integrations moved to optional peer dependencies
-- [x] Keep typedi behind `MeghContainer` for 1.0; it can be swapped in a later minor release
-- [x] MIT license file matches `package.json`
-- [x] Build without rimraf, ESLint/Jest configs fixed, husky 9, coverage off by default
-- [x] CI on Node 22 and 24 (typecheck, lint, test, build) and a tag-based publish workflow
-- [x] Request-pipeline integration tests
-
-**Docs**
-
-- [x] README and docs site rewritten for the current API, with an upgrade guide
-- [x] New pages: authentication, file uploads, caching, logging
-- [x] Docs site moved to VitePress, with template links removed and typos fixed
-
-### Left for 1.0.0
-
-**Regressions from 0.3.0** (see [Known Issues](#known-issues-in-030))
-
-- [ ] `@UseMiddleware(SomeClass)` crashes boot
-- [ ] `@Repository` / `@Queue` classes without a constructor break under DI
-- [ ] Apply status codes from `Results`, `HttpResponse.Created` and `@HttpCode`
-- [ ] Put `@Body()` / `@Query()` DTO schemas back into the OpenAPI document
-- [ ] Upload policy violations should return 400 / 413, not 500
-
-**Core correctness**
-
-- [ ] `useScheduler({ path })` crashes `run()` (wrong `require` path)
-- [ ] `@UploadFile` / `@UploadFiles` don't await `saveRequestFiles()`
-- [ ] `@All()` crashes at registration
-- [ ] Respect `error.statusCode` (401, 413, 415, 429, …) for non-HTTP-exception errors
-- [ ] One consistent middleware order; resolve `@UseMiddleware` through DI
-- [ ] Route metadata cache is keyed on `constructor.name`, so same-named classes collide
-- [ ] Controller discovery: `_resolveControllerDir` ignores its argument and rewrites the first `src` in the path; repeated `useControllers` calls overwrite each other
-- [ ] Functional routes: add `mapPatch`, and run authentication, DI and the standard error shape
-- [ ] `run()` `host` option (default `0.0.0.0` in containers)
-- [ ] Graceful shutdown: `app.close()` and close TypeORM, Knex, Redis and Socket.IO with a drain timeout instead of `process.exit(0)`
-- [ ] `PartialType` / `OmitType` / `PickType` don't carry class-validator rules correctly
-- [ ] Scalar `spec.content` returns the plugin module instead of the spec
-- [ ] `Environment` re-reads `.env` on every `get()`, and `dotenv` loads on import
-- [ ] Socket handler errors become unhandled rejections
-- [ ] `@MeghWorker` `autoStart` is not wired to app boot
-- [ ] `class-validator` / `class-transformer` are loaded at import time despite being optional peers
-
-**Missing features**
-
-- [ ] Security headers (helmet) and rate limiting as `use*` options
-- [ ] Health and readiness endpoints
-- [ ] Request IDs in logs, and the logger wired into Fastify
-- [ ] Redirects and response headers from handlers
-- [ ] Pluggable error handler / exception filters
-- [x] Lifecycle hooks (`onInit`, `onReady`, `onClose`, `app.close()`)
-- [ ] Config schema validation at boot
-- [ ] Global route prefix and API versioning
-- [ ] Compression
-- [ ] Socket.IO handshake authentication and per-channel authorization
-
-**API cleanup** (a 1.0 surface is a promise)
-
-- [ ] Finish or remove the no-ops `useHttps()`, `useSerialization()` and `mapFeatures()`
-- [x] Move TypeORM and Knex to the `@meghjs/data` plugin, and remove deprecated `useDatasource()`
-- [ ] Remove the `MeghSocketIo` stubs and unused adapter types
-- [ ] Remove `KnexHooks` / `KnexHooksFactory`, `DuplicateRouteException`, `mapRoute()` and `registerMiddleware()`
-- [x] Stop exporting `mock-db` from the public index, and build without Jest types
-- [ ] Replace remaining `console.log` calls with the logger
-
-**Tests**
-
-- [ ] `application.ts`: `run()`, shutdown, controller auto-discovery, `useScheduler({ path })`
-- [ ] Events, scheduler, workers, Redis cache, `testing.ts`, `map-types.ts`, config
-- [ ] Fix hollow tests and `MeghTest` (`from()` race, global container mutation)
-- [ ] Coverage thresholds
-
-**CLI** (`@meghjs/cli`, rewrite in progress)
-
-- [ ] Finish the commander-based rewrite: `--help` / `--version`, consistent flags and naming, refuse to overwrite existing projects
-- [ ] Generated code compiles against `@meghjs/core`
-- [ ] CLI tests (snapshots for every `make:*` command)
-- [ ] Release with versions matched to core
-
-**Docs and release**
-
-- [ ] Pages for configuration, scheduler, testing, dependency injection, responses, deployment and security hardening
-- [ ] API reference and FAQ
-- [ ] Contributor guide: project structure, and the exports that CLI-generated code relies on
-- [ ] Changelog and a versioning policy across core, CLI and docs
+Work left for 1.0.0 is tracked as issues in the
+[`1.0.0` milestone](https://github.com/meghjs/megh/milestone/1), with an
+overview in [`1.0-CHECKLIST.md`](https://github.com/meghjs/megh/blob/main/1.0-CHECKLIST.md).
+What's left is mainly core correctness fixes, security headers, rate limiting
+and compression, a global route prefix, tests, and trimming the public API.
 
 ---
 

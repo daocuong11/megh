@@ -1,0 +1,16 @@
+import { describe, expect, it } from 'vitest';
+import { Environment, MeghTest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  const config = MeghTest.getProvider({ClassName});
+
+  it('should be defined', () => {
+    expect(config).toBeDefined();
+  });
+
+  it('builds its values from the environment', () => {
+    // Replace with the values your config reads, e.g. set process.env.JWT_SECRET first.
+    expect(config.config(new Environment())).toEqual({});
+  });
+});

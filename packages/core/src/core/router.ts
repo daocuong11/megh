@@ -14,6 +14,7 @@ import {
   formatValidationMessage,
 } from "../common/helpers";
 import { Container } from "../di";
+import { internalLogger } from "../observability/internal-logger";
 import {
   CONTROLLER_META_KEY,
   ROUTE_META_KEY,
@@ -26,25 +27,66 @@ import {
   REQUEST_BODY_FILE_KEY,
   REQUEST_BODY_FILES_KEY,
 } from "../common/container";
+import { MethodParamMeta, IRequest, FuncRoute } from "./types";
 import {
-  MethodParamMeta,
-  IRequest,
-  FuncRoute,
-  ParamMetaOptions,
-} from "./types";
-import { BadRequestException, ForbiddenException } from "../common/exceptions";
+  BadRequestException,
+  ForbiddenException,
+  ValidationErrorException,
+} from "../errors/http-exceptions";
+import { getDeclaredFilters } from "../errors/exception-filter";
+import {
+  RATE_LIMIT_CONFIG_KEY,
+  RouteRateLimitOptions,
+  assertRouteRateLimit,
+  getDeclaredRateLimit,
+} from "../security/rate-limit";
+import {
+  compileValidator,
+  CompiledValidator,
+} from "../common/utils/compiled-validation";
+import { isMeghValidatorClass } from "../validator/metadata";
+import { validateDto } from "../validator/compiler";
+import { assertMeghOnly } from "../validator/compat";
+import {
+  resolveFilter,
+  ROUTE_FILTERS_CONFIG_KEY,
+} from "../errors/error-handler";
 import { contentDisposition } from "../common/utils/path-utils";
 import { MeghMiddleware } from "../http/middleware";
 import { REQUEST_METADATA_KEY } from "../http/controller";
+import { HTTP_CODE_META_KEY } from "../http/route-methods";
+import { HTTP_STATUS_KEY, HttpResult, OkStream } from "../http/results";
 import { OpenApiOptions } from "../openapi/openapi";
+import {
+  AUTHORIZED_EXTENSION,
+  RESPONSES_EXTENSION,
+  buildResponses,
+  declaredResponses,
+  isResponseType,
+} from "../openapi/responses";
 import {
   buildRequestBody,
   REQUEST_BODY_EXTENSION,
 } from "../openapi/request-body";
+import {
+  buildQueryParameters,
+  QUERY_PARAMS_EXTENSION,
+} from "../openapi/query-params";
 import mime from "mime";
-import Stream from "stream";
 import { HTTPMethods, FastifyInstance } from "fastify";
 import { ViewResult, sendView } from "../view/result";
+import { assertParamTypes } from "../http/params";
+import {
+  REDIRECT_META_KEY,
+  RESPONSE_HEADERS_META_KEY,
+} from "../http/route-methods";
+import {
+  VERSION_META_KEY,
+  VersioningOptions,
+  normalizeVersions,
+} from "../http/versioning";
+
+const log = internalLogger("router");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -74,9 +116,39 @@ function normalizeParamsToJsonSchema(
  * Take a raw @OpenApi schema object and return a Fastify-compatible
  * route schema — normalizing params, query → querystring, and headers.
  */
-function buildRouteSchema(raw: any, bodyClass?: Function): any {
+function buildRouteSchema(
+  raw: any,
+  bodyClass?: Function,
+  route: {
+    declared?: ReturnType<typeof declaredResponses>;
+    validates?: boolean;
+    authorized?: boolean;
+  } = {},
+): any {
   const { requestBody, responseBody, exclude, ...rest } = raw ?? {};
   const schema: any = rest;
+
+  // Responses given as a class, `[Class]` or `Paginated(Class)` are
+  // documented only: a Fastify `response` schema would also serialize the
+  // reply. Plain JSON schemas stay on `response`, as before.
+  const declared = [...(route.declared ?? [])];
+  if (raw?.response && typeof raw.response === "object") {
+    const fastifyResponse: Record<string, any> = {};
+    for (const [status, value] of Object.entries<any>(raw.response)) {
+      if (isResponseType(value))
+        declared.push({ status: Number(status), type: value });
+      else fastifyResponse[status] = value;
+    }
+    if (Object.keys(fastifyResponse).length) schema.response = fastifyResponse;
+    else delete schema.response;
+  }
+  const responses = buildResponses({
+    declared,
+    validates: !!route.validates,
+    authorized: !!route.authorized,
+  });
+  if (responses) schema[RESPONSES_EXTENSION] = responses;
+  if (route.authorized) schema[AUTHORIZED_EXTENSION] = true;
 
   // @OpenApi({ exclude: true }) → hidden from the generated document.
   if (exclude) schema.hide = true;
@@ -116,19 +188,114 @@ function buildRouteSchema(raw: any, bodyClass?: Function): any {
 }
 
 /**
- * Send a DTO validation failure in the same shape the global error handler
- * uses for 400s.
+ * A DTO validation failure, answered by the error handler as a 400 with the
+ * issues in `errors`.
  */
-function sendValidationError(
-  res: any,
+function validationError(
   errors: { path: string; constraints: Record<string, string> }[],
 ) {
-  return res.code(400).send({
-    code: 400,
-    status: "Error",
-    message: formatValidationMessage(errors),
-    errors,
-  });
+  return new ValidationErrorException(formatValidationMessage(errors), errors);
+}
+
+/**
+ * Methods `@All` routes answer. Fastify has no `ALL` method; HEAD comes
+ * with GET automatically.
+ */
+const ALL_METHODS: HTTPMethods[] = [
+  "GET",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+  "OPTIONS",
+];
+
+/** Fastify route constraint used by header versioning. */
+const VERSION_CONSTRAINT = "meghVersion";
+
+function toFastifyMethod(method: string): HTTPMethods | HTTPMethods[] {
+  const upper = method.toUpperCase();
+  return upper === "ALL" ? ALL_METHODS : (upper as HTTPMethods);
+}
+
+/**
+ * Send what a route returned: an `HttpResult` with its status and headers,
+ * a body marked by `withStatus`, a download or stream, or a plain value.
+ * `httpCode` comes from `@HttpCode` and loses to the result's own status.
+ */
+function sendResult(res: any, result: any, httpCode?: number) {
+  if (result instanceof ViewResult) return sendView(res, result);
+  if (result instanceof HttpResult) {
+    res.code(result.statusCode);
+    for (const [name, value] of Object.entries(result.headers)) {
+      res.header(name, value);
+    }
+    if (result instanceof OkStream) {
+      const { contentType, filename } = result.options;
+      res.header(
+        "Content-Type",
+        contentType ||
+          (filename && mime.getType(filename)) ||
+          "application/octet-stream",
+      );
+      if (filename) {
+        res.header("Content-Disposition", contentDisposition(filename));
+      }
+    }
+    const body = result.body;
+    return body === undefined ? res.send() : res.send(body);
+  }
+
+  const status =
+    (result !== null && typeof result === "object"
+      ? (result as any)[HTTP_STATUS_KEY]
+      : undefined) ?? httpCode;
+  if (status !== undefined) res.code(status);
+
+  if (result && result.download) {
+    const { stream, filename } = result;
+    if (!stream || typeof stream.pipe !== "function") {
+      return res.code(500).send({
+        code: 500,
+        error: "INTERNAL_ERROR",
+        message: "Invalid stream object",
+      });
+    }
+    const contentType =
+      result.contentType ||
+      mime.getType(filename) ||
+      "application/octet-stream";
+    res.header("Content-Type", contentType);
+    res.header("Content-Disposition", contentDisposition(filename));
+    stream.on("error", (err: any) => {
+      log.error({ err }, "Stream error");
+      if (!res.sent) {
+        res.code(500).send({
+          code: 500,
+          error: "StreamError",
+          message: "Error while streaming file.",
+        });
+      }
+    });
+    return res.send(stream);
+  }
+
+  if (result && result.pipe) {
+    result.on("error", (err: any) => {
+      log.error({ err }, "Stream error");
+      if (!res.sent) {
+        res.code(500).send({
+          code: 500,
+          error: "StreamError",
+          message: "Error while streaming file.",
+        });
+      }
+    });
+    res.header("Content-Type", "application/octet-stream");
+    return res.send(result);
+  }
+
+  return res.send(result);
 }
 
 // ---------------------------------------------------------------------------
@@ -136,17 +303,115 @@ function sendValidationError(
 // ---------------------------------------------------------------------------
 
 export class MeghRouter {
-  private routeSet = new Set<string>();
-  private metaCache = new Map<string, MethodParamMeta>();
-  private middlewares: Map<string, MeghMiddleware> = new Map();
+  // Keyed on the prototype itself: two controllers can share a class name.
+  private metaCache = new WeakMap<object, Map<string, MethodParamMeta>>();
   private rMap = new Map<string, FuncRoute>();
   private app: FastifyInstance;
   private authorizeMiddleware?: Constructor<any>;
   private authorizeMiddlewareMap = new Map<string, Constructor<any>>();
   private authenticationHandler?: Constructor<any>;
 
-  constructor(app: FastifyInstance) {
+  private compiledValidation: boolean;
+  /** True once a mapped route declares its own rate limit. */
+  hasRouteRateLimits = false;
+  private globalPrefix = "";
+  private prefixExclude: (string | RegExp)[] = [];
+  private versioning?: VersioningOptions;
+
+  /** Prefix every controller and inline route, e.g. `/api`. */
+  setGlobalPrefix(prefix: string, exclude: (string | RegExp)[] = []) {
+    const clean = prefix.trim() === "" ? "" : formatUrl(prefix);
+    this.globalPrefix = clean === "/" ? "" : clean;
+    this.prefixExclude = exclude.map((e) =>
+      typeof e === "string" ? formatUrl(e) || "/" : e,
+    );
+  }
+
+  /** Turn on URI or header versioning for controller routes. */
+  setVersioning(options: VersioningOptions) {
+    if (this.versioning) {
+      throw new Error("[Megh] useVersioning() is already on.");
+    }
+    if (options.defaultVersion !== undefined) {
+      normalizeVersions(options.defaultVersion);
+    }
+    this.versioning = options;
+    if (options.type === "header") {
+      const header = (options.header ?? "x-api-version").toLowerCase();
+      const fallback =
+        options.defaultVersion === undefined
+          ? undefined
+          : normalizeVersions(options.defaultVersion)[0];
+      // A route constraint: routes registered with { version: "2" } only
+      // match requests that ask for 2 (or the default version, when the
+      // header is missing). Routes without @Version match any request.
+      this.app.addConstraintStrategy({
+        name: VERSION_CONSTRAINT,
+        storage() {
+          const routes = new Map<string, unknown>();
+          return {
+            get: (version: string) => (routes.get(version) ?? null) as any,
+            set: (version: string, store: unknown) => {
+              routes.set(version, store);
+            },
+          };
+        },
+        deriveConstraint: (req: any) => {
+          const value = req.headers[header];
+          const version = Array.isArray(value) ? value[0] : value;
+          return typeof version === "string" && version.trim() !== ""
+            ? version.trim()
+            : fallback;
+        },
+        mustMatchWhenDerived: false,
+      } as any);
+    }
+  }
+
+  /** The URL(s) and constraints to register a route under. */
+  private routeTargets(
+    path: string,
+    versions: string[] | undefined,
+  ): { url: string; constraints?: Record<string, string> }[] {
+    const excluded = this.prefixExclude.some((e) =>
+      typeof e === "string" ? e === path : e.test(path),
+    );
+    const prefix = excluded ? "" : this.globalPrefix;
+    const join = (...parts: string[]) => formatUrl(parts.join("/")) || "/";
+    const v = this.versioning;
+    if (!v || !versions) return [{ url: join(prefix, path) }];
+    if (v.type === "uri") {
+      return versions.map((version) => ({
+        url: join(prefix, `${v.prefix ?? "v"}${version}`, path),
+      }));
+    }
+    return versions.map((version) => ({
+      url: join(prefix, path),
+      constraints: { [VERSION_CONSTRAINT]: version },
+    }));
+  }
+
+  /** Version(s) of a controller route: method, then class, then the default. */
+  private routeVersions(
+    controller: Function,
+    prototype: object,
+    method: string,
+  ): string[] | undefined {
+    if (!this.versioning) return undefined;
+    const own =
+      Reflect.getMetadata(VERSION_META_KEY, prototype, method) ??
+      Reflect.getMetadata(VERSION_META_KEY, controller) ??
+      Reflect.getMetadata(CONTROLLER_META_KEY, controller)?.options?.version;
+    const versions = own ?? this.versioning.defaultVersion;
+    return versions === undefined ? undefined : normalizeVersions(versions);
+  }
+
+  constructor(
+    app: FastifyInstance,
+    options: { compiledValidation?: boolean } = {},
+  ) {
     this.app = app;
+    this.compiledValidation = !!options.compiledValidation;
   }
 
   /**
@@ -155,6 +420,11 @@ export class MeghRouter {
    */
   setAuthenticationHandler(handler: Constructor<any>) {
     this.authenticationHandler = handler;
+  }
+
+  /** The class registered with `useAuthentication`, if any. */
+  getAuthenticationHandler(): Constructor<any> | undefined {
+    return this.authenticationHandler;
   }
 
   setAuthorizeMiddleware(middleware: Constructor<any>) {
@@ -193,15 +463,14 @@ export class MeghRouter {
     return this.authorizeMiddleware;
   }
 
-  registerMiddleware(name: string, instance: MeghMiddleware) {
-    this.middlewares.set(name, instance);
-  }
-
   private _processMeta(prototype: any, method: string): MethodParamMeta {
-    const cacheKey = `${prototype.constructor.name}_${method}`;
-    if (this.metaCache.has(cacheKey)) {
-      return this.metaCache.get(cacheKey)!;
+    let perClass = this.metaCache.get(prototype);
+    if (!perClass) {
+      perClass = new Map();
+      this.metaCache.set(prototype, perClass);
     }
+    const cached = perClass.get(method);
+    if (cached) return cached;
 
     const meta: MethodParamMeta = {
       request:
@@ -249,7 +518,7 @@ export class MeghRouter {
       (b: any) => b.validatorClass,
     );
 
-    this.metaCache.set(cacheKey, meta);
+    perClass.set(method, meta);
     return meta;
   }
 
@@ -285,19 +554,18 @@ export class MeghRouter {
     for await (const method of methods) {
       const methodMeta = Reflect.getMetadata(ROUTE_META_KEY, prototype, method);
       if (!methodMeta) continue;
+      assertParamTypes(prototype, method, ctrl.constructor.name);
 
       const methodmetaOptions = {
         method: methodMeta.method.toLowerCase(),
         path: formatUrl(controllerMeta.path + methodMeta.path),
       };
-      const routeKey = `${methodmetaOptions.method}:${methodmetaOptions.path}`;
-      if (!this.routeSet.has(routeKey)) {
-        this.routeSet.add(routeKey);
-      }
-
       const classMiddlewares = this.executeMiddlewares(ctrl, method);
-      const swaggerMeta =
-        Reflect.getMetadata("route:openapi", prototype, method) || {};
+      // `@OpenApi()` on the method, over the route decorator's `openapi` option.
+      const swaggerMeta = {
+        ...(methodMeta.openapi ?? {}),
+        ...(Reflect.getMetadata("route:openapi", prototype, method) || {}),
+      };
       const authClsMethodMeata = Reflect.getMetadata(
         AUTHORIZATION_META_KEY,
         ctrl.constructor,
@@ -326,16 +594,6 @@ export class MeghRouter {
         schema = { ...schema, body: bodySchema };
       }
 
-      // ✅ Auto-detect querystring from @Query() DTO if not manually set in @OpenApi
-      if (!swaggerMeta.query && !schema.querystring) {
-        for (const queryMeta of allMeta.query) {
-          if (queryMeta.validatorClass && queryMeta.schema) {
-            schema.querystring = queryMeta.schema;
-            break;
-          }
-        }
-      }
-
       // ✅ Auto-detect body from @Body() DTO if still not set
       if (!swaggerMeta.body && !bodySchema) {
         for (const bodyMeta of allMeta.body) {
@@ -348,6 +606,10 @@ export class MeghRouter {
 
       const routePath =
         methodmetaOptions.path === "" ? "/" : methodmetaOptions.path;
+      const routeTargets = this.routeTargets(
+        routePath,
+        this.routeVersions(ctrl.constructor, prototype, method),
+      );
 
       // --- Handle multipart ---
       const isMultipart =
@@ -387,7 +649,18 @@ export class MeghRouter {
           )?.dataType;
 
       // ✅ Normalize params/query/headers into valid JSON Schema
-      const routeSchema = buildRouteSchema(schema, bodyClass);
+      const routeSchema = buildRouteSchema(schema, bodyClass, {
+        declared: declaredResponses(ctrl.constructor, method),
+        validates: [...allMeta.body, ...allMeta.query].some(
+          (p) => p.validatorClass,
+        ),
+        authorized: !!(authClsMeata.authorize || authClsMethodMeata.authorize),
+      });
+
+      // @Query() parameters, documented only (Megh validates them itself).
+      const queryParams = buildQueryParameters(allMeta.query as any);
+      if (queryParams.length > 0)
+        routeSchema[QUERY_PARAMS_EXTENSION] = queryParams;
 
       // Resolve DI singletons once at route-registration time, not per request.
       // _resolveAuthorizer picks the named handler when @Authorized("jwt") is used,
@@ -409,8 +682,8 @@ export class MeghRouter {
         (authClsMeata.authorize && !_clsAuthInst) ||
         (authClsMethodMeata.authorize && !_mthdAuthInst);
       if (_authMissing) {
-        console.warn(
-          `[Megh] ${methodmetaOptions.method.toUpperCase()} ${routePath} uses @Authorized ` +
+        log.warn(
+          `${methodmetaOptions.method.toUpperCase()} ${routePath} uses @Authorized ` +
             "but no authorization handler is registered; every request will be denied (403). " +
             "Call app.useAuthorization(YourAuthorization).",
         );
@@ -420,160 +693,184 @@ export class MeghRouter {
       const _authnInst = this.authenticationHandler
         ? (Container.get(this.authenticationHandler) as any)
         : null;
+      // @UseMiddleware accepts classes (resolved through DI) or instances.
       const _resolvedMw: MeghMiddleware[] = classMiddlewares.map((m: any) =>
-        Container.get<MeghMiddleware>(m.constructor),
+        typeof m === "function" ? Container.get<MeghMiddleware>(m) : m,
       );
 
-      this.app.route({
-        url: routePath,
-        method: methodmetaOptions.method.toUpperCase() as HTTPMethods,
-        schema: routeSchema,
-        attachValidation: isMultipart,
-        handler: async (req, res) => {
-          let reqClone = req as unknown as IRequest;
+      // @HttpCode on the route; a returned result's own status wins.
+      const _httpCode: number | undefined = Reflect.getMetadata(
+        HTTP_CODE_META_KEY,
+        prototype,
+        method,
+      );
 
-          if (_authnInst) {
-            const user = await _authnInst.authenticate(reqClone);
-            if (res.sent) return;
-            if (user !== null && user !== undefined) {
-              (reqClone as any).user = user;
+      // @UseFilters on the route, then the controller, resolved once.
+      const _routeFilters = getDeclaredFilters(ctrl.constructor, method).map(
+        resolveFilter,
+      );
+
+      const _rateLimit = getDeclaredRateLimit(ctrl.constructor, method);
+      if (_rateLimit) this.hasRouteRateLimits = true;
+
+      // DTOs with Megh's decorators use Megh's validator. class-validator
+      // DTOs use class-validator, or (experimental flag) a validator compiled
+      // from its metadata; see common/utils/compiled-validation.ts.
+      // `undefined` = transformAndValidate.
+      const _compile = (meta: any): CompiledValidator | undefined => {
+        if (!meta.validatorClass) return undefined;
+        if (isMeghValidatorClass(meta.dataType)) {
+          assertMeghOnly(meta.dataType);
+          return (value) => validateDto(meta.dataType, value);
+        }
+        return this.compiledValidation
+          ? compileValidator(meta.dataType)
+          : undefined;
+      };
+      const _queryValidators = allMeta.query.map(_compile);
+      const _bodyValidators = allMeta.body.map(_compile);
+
+      // @Redirect and @ResponseHeader on the route.
+      const _redirect: { url: string; statusCode: number } | undefined =
+        Reflect.getMetadata(REDIRECT_META_KEY, prototype, method);
+      const _responseHeaders: Record<string, string> | undefined =
+        Reflect.getMetadata(RESPONSE_HEADERS_META_KEY, prototype, method);
+
+      for (const target of routeTargets)
+        this.app.route({
+          url: target.url,
+          ...(target.constraints && { constraints: target.constraints }),
+          method: toFastifyMethod(methodmetaOptions.method),
+          schema: routeSchema,
+          attachValidation: isMultipart,
+          config: {
+            [ROUTE_FILTERS_CONFIG_KEY]: _routeFilters,
+            ...(_rateLimit !== undefined && {
+              [RATE_LIMIT_CONFIG_KEY]: _rateLimit,
+            }),
+          },
+          handler: async (req, res) => {
+            let reqClone = req as unknown as IRequest;
+
+            // Order: middleware (controller, then route) → authentication →
+            // @Authorized (controller, then route) → validation → handler.
+            // Global middleware already ran as a preHandler hook.
+            if (_resolvedMw.length > 0) {
+              for (const mInst of _resolvedMw) {
+                reqClone = ((await mInst.invoke(reqClone, res)) ??
+                  reqClone) as IRequest;
+                if (res.sent) return;
+              }
             }
-          }
 
-          if (_authMissing) {
-            throw new ForbiddenException("Forbidden");
-          }
-
-          if (_clsAuthInst) {
-            const allowed = await _clsAuthInst.authorize(
-              reqClone,
-              authClsMeata.options,
-            );
-            if (res.sent) return;
-            if (allowed === false) throw new ForbiddenException("Forbidden");
-          }
-
-          if (_mthdAuthInst) {
-            const allowed = await _mthdAuthInst.authorize(
-              reqClone,
-              authClsMethodMeata.options,
-            );
-            if (res.sent) return;
-            if (allowed === false) throw new ForbiddenException("Forbidden");
-          }
-
-          if (_resolvedMw.length > 0) {
-            for (const mInst of _resolvedMw) {
-              reqClone = (await mInst.invoke(reqClone, res)) as IRequest;
+            if (_authnInst) {
+              const user = await _authnInst.authenticate(reqClone);
               if (res.sent) return;
-            }
-          }
-
-          const _argsResult = this._mapArgs(reqClone, allMeta);
-          const args =
-            _argsResult !== null &&
-            typeof (_argsResult as any).then === "function"
-              ? await (_argsResult as Promise<any[]>)
-              : (_argsResult as any[]);
-
-          if ((allMeta as any)._hasRequiredParams) {
-            for (let i = 0; i < allMeta.params.length; i++) {
-              const paramMeta = allMeta.params[i];
-              if (paramMeta.required) {
-                validateOrThrow(
-                  { [paramMeta.key]: args[paramMeta.index] },
-                  { [paramMeta.key]: { type: paramMeta.dataType } },
-                  { location: "param" },
-                );
+              if (user !== null && user !== undefined) {
+                (reqClone as any).user = user;
               }
             }
-          }
 
-          if ((allMeta as any)._hasValidatorQuery) {
-            for (let i = 0; i < allMeta.query.length; i++) {
-              const queryMeta = allMeta.query[i];
-              if (queryMeta.validatorClass) {
-                const { value, errors } = await transformAndValidate(
-                  queryMeta.dataType,
-                  args[queryMeta.index],
-                );
-                if (errors) return sendValidationError(res, errors);
-                args[queryMeta.index] = value;
-              }
-              if (queryMeta.required) {
-                validateOrThrow(
-                  { [queryMeta.key]: args[queryMeta.index] },
-                  { [queryMeta.key]: { type: queryMeta.dataType } },
-                  { location: "queryparam" },
-                );
+            if (_authMissing) {
+              throw new ForbiddenException("Forbidden");
+            }
+
+            if (_clsAuthInst) {
+              const allowed = await _clsAuthInst.authorize(
+                reqClone,
+                authClsMeata.options,
+              );
+              if (res.sent) return;
+              if (allowed === false) throw new ForbiddenException("Forbidden");
+            }
+
+            if (_mthdAuthInst) {
+              const allowed = await _mthdAuthInst.authorize(
+                reqClone,
+                authClsMethodMeata.options,
+              );
+              if (res.sent) return;
+              if (allowed === false) throw new ForbiddenException("Forbidden");
+            }
+
+            const _argsResult = this._mapArgs(reqClone, allMeta);
+            const args =
+              _argsResult !== null &&
+              typeof (_argsResult as any).then === "function"
+                ? await (_argsResult as Promise<any[]>)
+                : (_argsResult as any[]);
+
+            if ((allMeta as any)._hasRequiredParams) {
+              for (let i = 0; i < allMeta.params.length; i++) {
+                const paramMeta = allMeta.params[i];
+                if (paramMeta.required) {
+                  validateOrThrow(
+                    { [paramMeta.key]: args[paramMeta.index] },
+                    { [paramMeta.key]: { type: paramMeta.dataType } },
+                    { location: "param" },
+                  );
+                }
               }
             }
-          }
 
-          if (!isMultipart && (allMeta as any)._hasValidatorBody) {
-            for (let i = 0; i < allMeta.body.length; i++) {
-              const bodyMeta = allMeta.body[i];
-              if (bodyMeta.validatorClass) {
-                const { value, errors } = await transformAndValidate(
-                  bodyMeta.dataType,
-                  args[bodyMeta.index],
-                );
-                if (errors) return sendValidationError(res, errors);
-                args[bodyMeta.index] = value;
+            if ((allMeta as any)._hasValidatorQuery) {
+              for (let i = 0; i < allMeta.query.length; i++) {
+                const queryMeta = allMeta.query[i];
+                if (queryMeta.validatorClass) {
+                  const { value, errors } =
+                    _queryValidators[i]?.(args[queryMeta.index]) ??
+                    (await transformAndValidate(
+                      queryMeta.dataType,
+                      args[queryMeta.index],
+                    ));
+                  if (errors) throw validationError(errors);
+                  args[queryMeta.index] = value;
+                }
+                if (queryMeta.required) {
+                  validateOrThrow(
+                    { [queryMeta.key]: args[queryMeta.index] },
+                    { [queryMeta.key]: { type: queryMeta.dataType } },
+                    { location: "queryparam" },
+                  );
+                }
               }
             }
-          }
 
-          const result = await prototype[method].apply(ctrl, args);
-
-          if (result instanceof ViewResult) return sendView(res, result);
-
-          if (result && result.download) {
-            const { stream, filename } = result;
-            if (!stream || typeof stream.pipe !== "function") {
-              return res.code(500).send({
-                code: 500,
-                error: "INTERNAL_ERROR",
-                message: "Invalid stream object",
-              });
+            if (!isMultipart && (allMeta as any)._hasValidatorBody) {
+              for (let i = 0; i < allMeta.body.length; i++) {
+                const bodyMeta = allMeta.body[i];
+                if (bodyMeta.validatorClass) {
+                  const { value, errors } =
+                    _bodyValidators[i]?.(args[bodyMeta.index]) ??
+                    (await transformAndValidate(
+                      bodyMeta.dataType,
+                      args[bodyMeta.index],
+                    ));
+                  if (errors) throw validationError(errors);
+                  args[bodyMeta.index] = value;
+                }
+              }
             }
-            const contentType =
-              result.contentType ||
-              mime.getType(filename) ||
-              "application/octet-stream";
-            res.header("Content-Type", contentType);
-            res.header("Content-Disposition", contentDisposition(filename));
-            stream.on("error", (err: any) => {
-              console.error("Stream error:", err);
-              if (!res.sent) {
-                res.code(500).send({
-                  code: 500,
-                  error: "StreamError",
-                  message: "Error while streaming file.",
-                });
-              }
-            });
-            return res.send(stream);
-          }
 
-          if (result && result.pipe) {
-            result.on("error", (err: any) => {
-              console.error("Stream error:", err);
-              if (!res.sent) {
-                res.code(500).send({
-                  code: 500,
-                  error: "StreamError",
-                  message: "Error while streaming file.",
-                });
-              }
-            });
-            res.header("Content-Type", "application/octet-stream");
-            return res.send(result);
-          }
+            const result = await prototype[method].apply(ctrl, args);
 
-          return res.send(result);
-        },
-      });
+            if (_responseHeaders) {
+              for (const [name, value] of Object.entries(_responseHeaders)) {
+                res.header(name, value);
+              }
+            }
+            if (_redirect && !(result instanceof HttpResult)) {
+              // `{ url, statusCode }` from the handler overrides the decorator.
+              const url =
+                typeof result?.url === "string" ? result.url : _redirect.url;
+              const code = Number.isInteger(result?.statusCode)
+                ? result.statusCode
+                : _redirect.statusCode;
+              return res.code(code).header("location", url).send();
+            }
+            return sendResult(res, result, _httpCode);
+          },
+        });
     }
   }
 
@@ -620,13 +917,20 @@ export class MeghRouter {
     }
 
     if (!(meta as any)._needsFiles) return args;
+    return this._mapFiles(req, meta, args);
+  }
 
+  /** Save the uploaded files and fill the `@UploadFile(s)` arguments. */
+  private async _mapFiles(
+    req: IRequest,
+    meta: MethodParamMeta,
+    args: any[],
+  ): Promise<any[]> {
     if (
-      (meta as any)._needsFiles &&
       req.headers["content-type"]?.startsWith("multipart/form-data") &&
       (req as any).saveRequestFiles
     ) {
-      const files = (req as any).saveRequestFiles();
+      const files = await (req as any).saveRequestFiles();
 
       if (!files || files.length === 0) {
         if (meta.files && meta.files.length > 0) {
@@ -706,25 +1010,45 @@ export class MeghRouter {
       middlewares: [],
       schema: {},
     });
+    const entry = () => this.rMap.get(routeKey)!;
 
     const route = {
-      useMiddleware: <M extends MeghMiddleware>(
-        middlewares: Constructor<MeghMiddleware>[],
+      /** Run middleware (classes or instances) before the handler. */
+      useMiddleware: (
+        middlewares:
+          | MeghMiddleware
+          | Constructor<MeghMiddleware>
+          | (MeghMiddleware | Constructor<MeghMiddleware>)[],
       ) => {
-        const midds = Array.isArray(middlewares) ? middlewares : [middlewares];
-        const ms: any[] = (midds as unknown as any[]).map((mclass) => {
-          const cls = Container.get<MeghMiddleware>(mclass);
-          this.middlewares.set(mclass.name, cls);
-          return cls.invoke;
-        });
-        const r = this.rMap.get(routeKey);
-        if (r) r.middlewares = ms;
+        const list = Array.isArray(middlewares) ? middlewares : [middlewares];
+        entry().middlewares.push(...list);
+        return route;
+      },
+
+      /**
+       * Require authorization, like `@Authorized()` on a controller route.
+       * Pass a name to pick a handler from `useAuthorization({ ... })`.
+       */
+      authorized: (
+        options?: string | { name?: string; [key: string]: unknown },
+      ) => {
+        entry().authorize =
+          typeof options === "string" ? { name: options } : (options ?? {});
+        return route;
+      },
+
+      /**
+       * Give this route its own rate limit, like `@RateLimit()`, or pass
+       * `false` to leave it unlimited.
+       */
+      rateLimit: (options: RouteRateLimitOptions | false) => {
+        assertRouteRateLimit(options);
+        entry().rateLimit = options;
         return route;
       },
 
       useOpenApi: (options: OpenApiOptions) => {
-        const r = this.rMap.get(routeKey);
-        if (r) r.schema = options;
+        entry().schema = options;
         return route;
       },
     };
@@ -744,47 +1068,75 @@ export class MeghRouter {
     return this._routeHandler(path, "PUT", fn);
   }
 
-  mapDelete<T extends (...args: any[]) => any>(path: string = "", fn: T) {
-    return this._routeHandler(path, "DELETE", fn);
+  mapPatch<T extends (...args: any[]) => any>(path: string = "", fn: T) {
+    return this._routeHandler(path, "PATCH", fn);
   }
 
-  async mapRoute<T extends (...args: any[]) => any>(
-    method: "get" | "post" | "put" | "delete",
-    path: string = "",
-    fn: T,
-  ) {
-    this.app[method](path, async (req: any, res: any) => {
-      try {
-        const result = await fn(req, res);
-        if (typeof result === "object" && result !== null) {
-          res.json(result);
-        } else {
-          res.send(result);
-        }
-      } catch (error) {
-        console.error(`Error in ${method} route handler:`, error);
-        res.status(500).send({ error: "Internal Server Error" });
-      }
-    });
+  mapDelete<T extends (...args: any[]) => any>(path: string = "", fn: T) {
+    return this._routeHandler(path, "DELETE", fn);
   }
 
   processFunctionalRoutes() {
     this.rMap.forEach((value, key) => {
       const colonIdx = key.indexOf(":");
       const m = key.slice(0, colonIdx);
-      const r = key.slice(colonIdx + 1); // ✅ handles paths containing ":"
+      const r = key.slice(colonIdx + 1); // handles paths containing ":"
 
-      const routeSchema = buildRouteSchema(value.schema || {});
+      const routeSchema = buildRouteSchema(value.schema || {}, undefined, {
+        authorized: !!value.authorize,
+      });
+
+      // Resolved once, like controller routes.
+      const middlewares: MeghMiddleware[] = value.middlewares.map((m: any) =>
+        typeof m === "function" ? Container.get<MeghMiddleware>(m) : m,
+      );
+      const authn = this.authenticationHandler
+        ? (Container.get(this.authenticationHandler) as any)
+        : null;
+      const authzCls = value.authorize
+        ? this._resolveAuthorizer(value.authorize)
+        : undefined;
+      const authz = authzCls ? (Container.get(authzCls) as any) : null;
+      if (value.authorize && !authz) {
+        log.warn(
+          `${m} ${r} uses .authorized() but no authorization handler is registered; ` +
+            "every request will be denied (403). Call app.useAuthorization(YourAuthorization).",
+        );
+      }
+
+      if (value.rateLimit) this.hasRouteRateLimits = true;
 
       this.app.route({
-        method: m.toUpperCase() as HTTPMethods,
-        url: r,
+        method: toFastifyMethod(m),
+        url: this.routeTargets(r, undefined)[0].url,
         schema: routeSchema,
-        preHandler: value.middlewares ?? [],
+        ...(value.rateLimit !== undefined && {
+          config: { [RATE_LIMIT_CONFIG_KEY]: value.rateLimit },
+        }),
+        // Same order as controller routes: middleware → authentication →
+        // authorization → handler.
         handler: async (req, res) => {
-          const result = await value.handler(req, res);
-          if (result instanceof ViewResult) return sendView(res, result);
-          return result;
+          let request = req as unknown as IRequest;
+          for (const mw of middlewares) {
+            request = ((await mw.invoke(request, res)) ?? request) as IRequest;
+            if (res.sent) return;
+          }
+          if (authn) {
+            const user = await authn.authenticate(request);
+            if (res.sent) return;
+            if (user !== null && user !== undefined) {
+              (request as any).user = user;
+            }
+          }
+          if (value.authorize) {
+            if (!authz) throw new ForbiddenException("Forbidden");
+            const allowed = await authz.authorize(request, value.authorize);
+            if (res.sent) return;
+            if (allowed === false) throw new ForbiddenException("Forbidden");
+          }
+          const result = await value.handler(request, res);
+          if (res.sent) return;
+          return sendResult(res, result);
         },
       });
     });

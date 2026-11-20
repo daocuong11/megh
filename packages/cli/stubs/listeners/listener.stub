@@ -1,0 +1,17 @@
+{Imports}
+
+/**
+ * Runs each time {EventClass} is dispatched. Inject services through the
+ * constructor.
+ *
+ * Register it once at startup, e.g. in src/app.ts:
+ *
+ * @example
+ * EventRegistry.getInstance().register({EventClass}, MeghContainer.get({ClassName}));
+ */
+@AppService
+export class {ClassName} extends MeghEventListener<{EventClass}> {
+  async handler(event: {EventClass}): Promise<void> {
+    // event.payload is the data; event.name and event.timestamp are set for you.
+  }
+}

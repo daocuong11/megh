@@ -4,9 +4,7 @@
  * @email xtrinsic96@gmail.com
  * @url https://github.com/xtareq
  */
-import Fastify, { FastifyInstance, HTTPMethods } from "fastify";
-import path from "path";
-import fs from "fs";
+import Fastify, { FastifyInstance } from "fastify";
 import { MeghRouter } from "./router";
 import { Container } from "../di";
 import {
@@ -16,108 +14,88 @@ import {
   GlobalOptions,
   CacheOptions,
   LifecycleHook,
+  RunOptions,
+  SchedulerScanOptions,
+  CompressionOptions,
 } from "./interfaces";
-import { BaseHttpException } from "../common/exceptions";
+import {
+  MeghErrorHandler,
+  ErrorLogger,
+  ExceptionFilterLike,
+  ErrorHandlerFunction,
+} from "../errors";
 import { SystemUseError } from "../common/exceptions/system-exception";
-import { Constructor, inject, loadPackageFromClient } from "../common/helpers";
+import { Constructor } from "../common/helpers";
 import { generateSwaggerSchema } from "../openapi/swagger-schema";
+import { applyResponseExtensions } from "../openapi/responses";
 import { applyRequestBodyExtensions } from "../openapi/request-body";
+import { applyQueryParamExtensions } from "../openapi/query-params";
 import { swaggerUiBranding } from "../openapi/branding";
 import { OpenApiUiOptions } from "../openapi/openapi";
 import { MeghMiddleware } from "../http/middleware";
 import { MeghScheduler } from "../scheduler";
+import { isScheduledTask } from "../scheduler/schedule-registry";
 import { isApiController } from "../common/container";
-import { AutoControllerOptions, IResponse, TestApplication } from "./types";
+import { AutoControllerOptions, IResponse } from "./types";
 
-import type { RedisOptions } from "ioredis";
 import { CacheManager } from "../observability/cache";
-import { MeghConfig } from "../config/config";
+import { Mailer } from "../mail/mailer";
+import type { MailConfig } from "../mail/config";
+import {
+  HealthCheck,
+  HealthOptions,
+  HealthRegistry,
+  SKIP_GLOBAL_MIDDLEWARE,
+} from "../observability/health";
+import {
+  GetConfig,
+  MeghConfig,
+  validateConfigSchemas,
+  validateEnv,
+} from "../config/config";
+import type { VersioningOptions } from "../http/versioning";
 import { MeghAuthentication } from "../security/authentication";
+import {
+  SecurityHeadersOptions,
+  installSecurityHeaders,
+} from "../security/headers";
+import {
+  RateLimitOptions,
+  RateLimitStore,
+  installRateLimit,
+} from "../security/rate-limit";
 import { registerPlugins } from "../plugins/registry";
 import { internalLogger } from "../observability/internal-logger";
-import { setConnection } from "../orm/connection";
-import type { Kysely } from "kysely";
 import { ViewEngine, setViewEngine, type ViewEngineOptions } from "../view";
+import {
+  isTypeScriptRuntime,
+  resolveSourceDir,
+} from "../common/utils/path-utils";
+import { requireOptional } from "../common/utils/optional-peer";
+import { scanModules } from "./discovery";
+import {
+  DEFAULT_REQUEST_ID_HEADER,
+  createRequestIdGenerator,
+  installRequestContext,
+} from "../observability/request-context";
 // ---------------------------------------------------------------------------
 // Lazy loaders for optional peer dependencies
 // ---------------------------------------------------------------------------
 
-function requireSocketIo() {
-  try {
-    return require("fastify-socket.io");
-  } catch {
-    throw new Error(
-      "[Megh] fastify-socket.io is not installed.\n" +
-        "Run: npm install fastify-socket.io socket.io",
-    );
-  }
-}
-
-function requireSwagger() {
-  try {
-    return require("@fastify/swagger");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/swagger is not installed.\n" +
-        "Run: npm install @fastify/swagger @fastify/swagger-ui",
-    );
-  }
-}
-
-function requireSwaggerUi() {
-  try {
-    return require("@fastify/swagger-ui");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/swagger-ui is not installed.\n" +
-        "Run: npm install @fastify/swagger-ui",
-    );
-  }
-}
-
-function requireScalar() {
-  try {
-    return require("@scalar/fastify-api-reference");
-  } catch {
-    throw new Error(
-      "[Megh] @scalar/fastify-api-reference is not installed.\n" +
-        "Run: npm install @scalar/fastify-api-reference",
-    );
-  }
-}
-
-function requireCors() {
-  try {
-    return require("@fastify/cors");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/cors is not installed.\n" +
-        "Run: npm install @fastify/cors",
-    );
-  }
-}
-
-function requireMultipart() {
-  try {
-    return require("@fastify/multipart");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/multipart is not installed.\n" +
-        "Run: npm install @fastify/multipart",
-    );
-  }
-}
-
-function requireStatic() {
-  try {
-    return require("@fastify/static");
-  } catch {
-    throw new Error(
-      "[Megh] @fastify/static is not installed.\n" +
-        "Run: npm install @fastify/static",
-    );
-  }
-}
+const requireSocketIo = () =>
+  requireOptional("fastify-socket.io", {
+    install: ["fastify-socket.io", "socket.io"],
+  });
+const requireSwagger = () =>
+  requireOptional("@fastify/swagger", {
+    install: ["@fastify/swagger", "@fastify/swagger-ui"],
+  });
+const requireSwaggerUi = () => requireOptional("@fastify/swagger-ui");
+const requireScalar = () => requireOptional("@scalar/fastify-api-reference");
+const requireCors = () => requireOptional("@fastify/cors");
+const requireMultipart = () => requireOptional("@fastify/multipart");
+const requireStatic = () => requireOptional("@fastify/static");
+const requireCompress = () => requireOptional("@fastify/compress");
 
 // ---------------------------------------------------------------------------
 // Application
@@ -130,12 +108,11 @@ export class MeghApplication implements IMeghApplication {
   private alreadyRun = false;
   private hasSwagger = false;
   private globalSwaggerOptions: OpenApiUiOptions | undefined;
-  private isMapFeatures = false;
   private registerControllerAuto = false;
-  private registerControllerPath = "src/controllers";
+  /** Set by useControllers({ auto: true, path }). Unset: every `controllers/` folder under src/. */
+  private registerControllerPath: string | undefined;
   private controllers: any[] = [];
   private _hasWebsocket = false;
-  private io: any;
   private scheduler: MeghScheduler = new MeghScheduler();
   private schedulerTasks: any[] = [];
   private registerSchedulerAuto = false;
@@ -148,11 +125,32 @@ export class MeghApplication implements IMeghApplication {
       close: [],
     };
   private closing: Promise<void> | null = null;
+  private signalHandler: ((signal: NodeJS.Signals) => void) | null = null;
   private pluginNames: string[] = [];
   private viewEngine: ViewEngine | undefined;
+  private usesCache = false;
+  private usesMail = false;
+  private usesSecurityHeaders = false;
+  private usesCompression = false;
+  private envSchemas: Constructor<object>[] = [];
+  private rateLimitOptions: RateLimitOptions | undefined;
+  /** The rate limit store Megh created, closed on shutdown. */
+  private ownedRateLimitStore: RateLimitStore | null = null;
+  private health = new HealthRegistry();
+  private errorHandler = new MeghErrorHandler({
+    isDevelopment: () => this.isDevelopment(),
+  });
 
   private constructor(options?: MeghApplicationOptions) {
+    const requestId = options?.requestId ?? {};
+    const requestIdHeader =
+      (requestId && requestId.header) || DEFAULT_REQUEST_ID_HEADER;
     this.app = Fastify({
+      ...(requestId && {
+        // genReqId decides; Fastify's own header lookup would trust any value.
+        requestIdHeader: false,
+        genReqId: createRequestIdGenerator(requestIdHeader, requestId.generate),
+      }),
       ...options?.server,
       ajv: {
         customOptions: {
@@ -161,7 +159,12 @@ export class MeghApplication implements IMeghApplication {
         },
       },
     }) as FastifyInstance;
-    this.router = new MeghRouter(this.app);
+    this.router = new MeghRouter(this.app, {
+      compiledValidation:
+        options?.experimental?.compiledValidation ??
+        /^(1|true)$/i.test(process.env.MEGH_COMPILED_VALIDATION ?? ""),
+    });
+    if (requestId) installRequestContext(this.app, requestIdHeader);
 
     this.pluginNames = registerPlugins(this, options);
     if (this.pluginNames.length) {
@@ -177,9 +180,19 @@ export class MeghApplication implements IMeghApplication {
     return this.pluginNames;
   }
 
+  /**
+   * The application. The first call creates it with `options`; later calls
+   * return the same instance, and options passed to them are ignored (with a
+   * warning).
+   */
   public static getApp(options?: MeghApplicationOptions) {
     if (!MeghApplication.instance) {
       MeghApplication.instance = new MeghApplication(options);
+    } else if (options !== undefined) {
+      internalLogger("app").warn(
+        "getApp(options) was called after the app was created; these options are ignored. " +
+          "Pass options only to the first getApp() call.",
+      );
     }
     return MeghApplication.instance;
   }
@@ -197,21 +210,94 @@ export class MeghApplication implements IMeghApplication {
   }
 
   /**
-   * Use `db` for models (`@meghjs/core` ORM). It is also registered in the
-   * container under `ORM_CONNECTION`, and destroyed when the app shuts down.
+   * Send security headers on every response: a Content Security Policy,
+   * HSTS, `X-Frame-Options`, `X-Content-Type-Options: nosniff` and more.
+   * Pass `false` for a header to leave it out. The API docs page from
+   * `useOpenApi()` keeps its own CSP.
+   *
+   *   app.useSecurityHeaders()
+   *   app.useSecurityHeaders({ contentSecurityPolicy: false })
+   *   app.useSecurityHeaders({
+   *     contentSecurityPolicy: { directives: { imgSrc: ["'self'", 'https://cdn.example.com'] } },
+   *   })
    */
-  useDatabase(db: Kysely<any>) {
-    setConnection(db);
-    this.onClose(() => db.destroy());
+  useSecurityHeaders(options?: SecurityHeadersOptions) {
+    this.assertNotStarted("useSecurityHeaders");
+    if (this.usesSecurityHeaders) {
+      throw new SystemUseError("[Megh] useSecurityHeaders() is already on.");
+    }
+    installSecurityHeaders(this.app, options, () =>
+      this.hasSwagger
+        ? (this.globalSwaggerOptions?.routePrefix ?? "/swagger")
+        : undefined,
+    );
+    this.usesSecurityHeaders = true;
     return this;
+  }
+
+  /**
+   * Limit how many requests each client can make per window, answering 429
+   * with `Retry-After` when it is over. Defaults to 100 a minute per IP,
+   * counted in memory. Give a route its own limit with `@RateLimit()`.
+   *
+   *   app.useRateLimit()
+   *   app.useRateLimit({ max: 300, window: '5m' })
+   *   app.useRateLimit({ redis }) // share counts between replicas
+   */
+  useRateLimit(options: RateLimitOptions = {}) {
+    this.assertNotStarted("useRateLimit");
+    if (this.rateLimitOptions) {
+      throw new SystemUseError("[Megh] useRateLimit() is already on.");
+    }
+    this.rateLimitOptions = { ...options };
+    return this;
+  }
+
+  /** Install the rate limiter once routes are known. */
+  private installRateLimiting() {
+    const options =
+      this.rateLimitOptions ??
+      // Only @RateLimit() / .rateLimit() routes are limited.
+      (this.router.hasRouteRateLimits ? { global: false } : undefined);
+    if (!options) return;
+    const { store, ownsStore } = installRateLimit(this.app, options);
+    if (ownsStore) this.ownedRateLimitStore = store;
   }
 
   useCache(options?: CacheOptions) {
     CacheManager.configure(options);
+    this.usesCache = true;
 
     if (!Container.has(CacheManager)) {
       Container.set(CacheManager, new CacheManager());
     }
+    return this;
+  }
+
+  /**
+   * Turn on mail: inject `Mailer` to send `Mailable`s. Settings come from
+   * `MEGH_MAIL_*` in `.env`; anything passed here overrides them.
+   *
+   *   app.useMail()
+   *   app.useMail({ from: 'hello@x.io', mailers: { audit: myTransport } })
+   *   app.useMail(MailSettings) // an @AppConfig class returning MailConfig
+   *
+   * Throws at startup when the settings are invalid, e.g. in production with
+   * no mailer set.
+   */
+  useMail(options?: MailConfig | Constructor<MeghConfig<MailConfig>>) {
+    if (
+      typeof options === "function" &&
+      options.prototype != null &&
+      typeof options.prototype.config === "function"
+    ) {
+      Mailer.configure(
+        GetConfig(options as Constructor<MeghConfig<MailConfig>>),
+      );
+    } else {
+      Mailer.configure(options as MailConfig | undefined);
+    }
+    this.usesMail = true;
     return this;
   }
 
@@ -251,10 +337,12 @@ export class MeghApplication implements IMeghApplication {
     );
     const baseSchema = generateSwaggerSchema(safeControllers);
 
+    const security = openApiSecurity(options?.auth);
     await this.app.register(requireSwagger(), {
       // ✅ lazy
       openapi: {
         ...baseSchema,
+        ...(options?.openapi ? { openapi: options.openapi } : {}),
         info: options?.info || { title: "API", version: "1.0.0" },
         servers: options?.servers,
         tags: options?.tags,
@@ -269,21 +357,30 @@ export class MeghApplication implements IMeghApplication {
         security: options?.security,
         externalDocs: options?.externalDocs,
       },
-      transformObject: ({ openapiObject }: { openapiObject: any }) =>
-        applyRequestBodyExtensions(openapiObject),
+      transformObject: ({ openapiObject }: { openapiObject: any }) => {
+        const document = applyResponseExtensions(
+          applyQueryParamExtensions(applyRequestBodyExtensions(openapiObject)),
+          security,
+        );
+        if (options?.paths)
+          document.paths = { ...options.paths, ...document.paths };
+        return document;
+      },
     });
 
     const routePrefix = options?.routePrefix || "/swagger";
 
-    if (options?.provider === "scalar") {
+    if ((options?.provider ?? options?.ui) === "scalar") {
       await this.app.register(requireScalar(), {
         // ✅ lazy
         routePrefix,
+        // No `content`: with @fastify/swagger registered (above), Scalar
+        // serves `fastify.swagger()`, the generated document. A `url` or
+        // `content` in the options below still takes precedence.
         configuration: {
-          spec: {
-            content: () => requireSwagger(),
-          },
           ...options?.uiConfig,
+          ...options?.configuration,
+          ...options?.scalar,
         },
       });
     } else {
@@ -314,6 +411,9 @@ export class MeghApplication implements IMeghApplication {
     middlewares.forEach((m) => {
       const cls = Container.get<MeghMiddleware>(m);
       this.app.addHook("preHandler", async (req, res) => {
+        // Health probes must answer even when global middleware would reject
+        // the request (an API key check, an IP allowlist).
+        if ((req.routeOptions?.config as any)?.[SKIP_GLOBAL_MIDDLEWARE]) return;
         await cls.invoke(req as any, res as IResponse);
       });
     });
@@ -366,7 +466,74 @@ export class MeghApplication implements IMeghApplication {
     return this;
   }
 
-  useSerialization() {
+  /**
+   * Register global exception filters. They run in order, after any
+   * `@UseFilters` on the route or controller, and before Megh's default
+   * error response.
+   *
+   *   app.useExceptionFilters([EntityNotFoundFilter, ProblemJsonFilter])
+   *
+   * Each entry can be a filter class (resolved through DI), a filter
+   * instance or a function `(error, ctx) => ...`.
+   *
+   * @see ExceptionFilter
+   */
+  useExceptionFilters(filters: ExceptionFilterLike | ExceptionFilterLike[]) {
+    this.assertNotStarted("useExceptionFilters");
+    this.errorHandler.addFilters(Array.isArray(filters) ? filters : [filters]);
+    return this;
+  }
+
+  /**
+   * Register a function that handles request errors. It is a global filter
+   * that sees every error: return a body to send it, return an `Error` to
+   * hand it on, or return nothing to fall back to the default response.
+   *
+   *   app.useErrorHandler((error, { response }) => ({
+   *     ok: false,
+   *     message: response.body.message,
+   *   }))
+   */
+  useErrorHandler(handler: ErrorHandlerFunction) {
+    return this.useExceptionFilters([handler]);
+  }
+
+  /**
+   * Replace how errors answered with the default response are logged, or
+   * pass `false` to stop logging them.
+   */
+  useErrorLogger(logger: ErrorLogger | false) {
+    this.errorHandler.setLogger(logger);
+    return this;
+  }
+
+  /** Install the error and not-found handlers on the Fastify instance. @internal */
+  installErrorHandling() {
+    this.errorHandler.install(this.app);
+  }
+
+  /**
+   * Serve health routes: `GET /health` (liveness, always 200) and
+   * `GET /ready` (readiness: runs every health check, 503 if one fails).
+   * Plugins register their own checks, such as Megh ORM's `database`.
+   *
+   *   app.useHealth({ checks: { redis: () => redis.ping() } })
+   */
+  useHealth(options: HealthOptions = {}) {
+    this.assertNotStarted("useHealth");
+    for (const [name, check] of Object.entries(options.checks ?? {})) {
+      this.health.add(name, check);
+    }
+    this.health.install(this.app, options, () => this.isDevelopment());
+    return this;
+  }
+
+  /**
+   * Add a readiness check, reported by `GET /ready` once `useHealth()` is on.
+   * It passes unless it throws, rejects or returns `false`.
+   */
+  addHealthCheck(name: string, check: HealthCheck) {
+    this.health.add(name, check);
     return this;
   }
 
@@ -379,9 +546,11 @@ export class MeghApplication implements IMeghApplication {
    * Auto-scan a directory (mirrors useControllers):
    *   app.useScheduler({ path: "src/tasks" })
    */
-  useScheduler(tasks: Constructor[] | { path: string }) {
+  useScheduler(tasks: Constructor[] | SchedulerScanOptions = {}) {
     if (Array.isArray(tasks)) {
-      this.schedulerTasks = tasks;
+      for (const task of tasks) {
+        if (!this.schedulerTasks.includes(task)) this.schedulerTasks.push(task);
+      }
       this.scheduler.addTaskClasses(tasks);
     } else {
       this.registerSchedulerAuto = true;
@@ -390,14 +559,17 @@ export class MeghApplication implements IMeghApplication {
     return this;
   }
 
+  /**
+   * Register controller classes, or `{ auto: true }` to scan for them.
+   * Calling it again adds to the earlier list.
+   */
   useControllers(controllers: Constructor[] | AutoControllerOptions) {
     if (Array.isArray(controllers)) {
-      this.controllers = controllers;
-      controllers.forEach((controller) => {
+      for (const controller of controllers) {
         if (!this.controllers.includes(controller)) {
           this.controllers.push(controller);
         }
-      });
+      }
     } else {
       this.registerControllerAuto = true;
       if (controllers.path) {
@@ -434,7 +606,66 @@ export class MeghApplication implements IMeghApplication {
     return this.viewEngine!;
   }
 
-  useHttps(options?: any) {
+  /**
+   * Compress responses (gzip, deflate, brotli) for clients that accept it,
+   * with `@fastify/compress`. Options are passed to it; by default bodies
+   * under 1024 bytes are sent as they are.
+   *
+   *   app.useCompression()
+   *   app.useCompression({ encodings: ['gzip'] })
+   */
+  useCompression(options: CompressionOptions = {}) {
+    this.assertNotStarted("useCompression");
+    if (this.usesCompression) {
+      throw new SystemUseError("[Megh] useCompression() is already on.");
+    }
+    this.usesCompression = true;
+    this.app.register(requireCompress(), { global: true, ...options });
+    return this;
+  }
+
+  /**
+   * Put `prefix` in front of every controller and inline route:
+   * `setGlobalPrefix('/api')` serves `@Get('/users')` at `/api/users`.
+   * Health routes and the API docs page keep their own paths; `exclude`
+   * lists more routes to leave alone (paths as declared, or RegExps).
+   */
+  setGlobalPrefix(
+    prefix: string,
+    options: { exclude?: (string | RegExp)[] } = {},
+  ) {
+    this.assertNotStarted("setGlobalPrefix");
+    this.router.setGlobalPrefix(prefix, options.exclude);
+    return this;
+  }
+
+  /**
+   * Version controller routes with `@Version()`, in the path
+   * (`{ type: 'uri' }`: `/v1/users`) or from a header
+   * (`{ type: 'header' }`: `X-API-Version: 1`).
+   */
+  useVersioning(options: VersioningOptions) {
+    this.assertNotStarted("useVersioning");
+    this.router.setVersioning(options);
+    return this;
+  }
+
+  /**
+   * Validate environment variables against a DTO class when the app starts,
+   * so a missing or malformed variable fails at boot with every problem
+   * listed. Numbers and booleans are converted before validating.
+   *
+   *   class Env {
+   *     @IsInt() PORT: number;
+   *     @IsString() DATABASE_URL: string;
+   *   }
+   *   app.useEnvSchema(Env)
+   *
+   * `validateEnv(Env)` returns the converted values anywhere else.
+   */
+  useEnvSchema(schema: Constructor<object>) {
+    this.assertNotStarted("useEnvSchema");
+    this.envSchemas.push(schema);
     return this;
   }
 
@@ -447,8 +678,17 @@ export class MeghApplication implements IMeghApplication {
     if (options.multipart) this.useMultipart(options.multipart);
     if (options.staticFiles) this.useStaticFiles(options.staticFiles);
     if (options.views) this.useViews(options.views);
-    if ((options as any).scheduler)
-      this.useScheduler((options as any).scheduler);
+    if (options.compression)
+      this.useCompression(
+        options.compression === true ? {} : options.compression,
+      );
+    if (options.securityHeaders)
+      this.useSecurityHeaders(
+        options.securityHeaders === true ? {} : options.securityHeaders,
+      );
+    if (options.rateLimit)
+      this.useRateLimit(options.rateLimit === true ? {} : options.rateLimit);
+    if (options.scheduler) this.useScheduler(options.scheduler);
     return this;
   }
 
@@ -495,16 +735,11 @@ export class MeghApplication implements IMeghApplication {
         try {
           await w?.close?.();
         } catch (err) {
-          console.error("[Megh] Failed to close worker:", err);
+          internalLogger("queue").error({ err }, "Failed to close worker");
         }
       }),
     );
     this._workers = [];
-  }
-
-  mapFeatures() {
-    this.isMapFeatures = true;
-    return this;
   }
 
   /**
@@ -517,6 +752,9 @@ export class MeghApplication implements IMeghApplication {
   }
 
   private async _mapControllers() {
+    // Load the plugins registered so far (compression, CORS, ...) first:
+    // some, like @fastify/compress, hook into routes as they are added.
+    await this.app.after();
     const safeControllers = (this.controllers ?? []).filter(
       (c) => c != null && typeof c === "function",
     );
@@ -532,52 +770,37 @@ export class MeghApplication implements IMeghApplication {
   }
 
   private _resolveControllerDir(dir?: string) {
-    const isTsNode =
-      process.env.TS_NODE_DEV ||
-      process.env.TS_NODE_PROJECT ||
-      (process as any)[Symbol.for("ts-node.register.instance")];
-    const controllerDir = path.join(process.cwd(), this.registerControllerPath);
-    return isTsNode ? controllerDir : controllerDir.replace("src", "dist");
+    return resolveSourceDir(
+      dir ?? this.registerControllerPath ?? "src",
+      isTypeScriptRuntime(),
+    );
   }
 
   private async autoControllers(controllersPath?: string) {
     const conDir = this._resolveControllerDir(controllersPath);
-    const isTsNode =
-      process.env.TS_NODE_DEV ||
-      process.env.TS_NODE_PROJECT ||
-      (process as any)[Symbol.for("ts-node.register.instance")];
+    // Without a path, look in every folder named `controllers` under src/:
+    // src/controllers/** and module folders such as src/users/controllers/**.
+    const inControllersFolder = (file: string) =>
+      file.split(/[\\/]/).slice(0, -1).includes("controllers");
+    const scanAll =
+      controllersPath !== undefined ||
+      this.registerControllerPath !== undefined;
 
-    try {
-      const files = fs.readdirSync(conDir, {
-        recursive: true,
-        encoding: "utf-8",
-      }) as string[];
-
-      for (const file of files) {
-        const isTestFile = /\.(test|spec|e2e-spec)\.(ts|js)$/.test(file);
-        if (isTestFile) continue;
-        if (isTsNode ? file.endsWith(".ts") : file.endsWith(".js")) {
-          const filePath = path.join(conDir, file);
-          const module = await import(filePath);
-          for (const exported of Object.values(module)) {
-            if (typeof exported === "function" && isApiController(exported)) {
-              if (!this.controllers.some((con) => exported.name === con.name)) {
-                this.controllers.push(exported);
-              }
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Could not auto-register controllers from " + conDir, e);
-    }
+    await scanModules(conDir, "controllers", {
+      include: (file) => scanAll || inControllersFolder(file),
+      visit: (exports) => this.collectControllers(exports),
+    });
   }
 
-  private _mapFeatures() {
-    try {
-      Container.get("features");
-    } catch {
-      // features token not registered — safe to ignore
+  private collectControllers(exports: unknown[]) {
+    for (const exported of exports) {
+      if (
+        typeof exported === "function" &&
+        isApiController(exported) &&
+        !this.controllers.includes(exported)
+      ) {
+        this.controllers.push(exported);
+      }
     }
   }
 
@@ -586,8 +809,6 @@ export class MeghApplication implements IMeghApplication {
     try {
       const { SocketContextService } = require("../events/socket-dispatcher");
       const { EventSubscriberRegistry } = require("../events/event-subscriber");
-      const { SocketIoServer } = require("../realtime/websocket");
-
       const contextService = Container.get(SocketContextService) as any;
       const subscriberRegistry = Container.get(EventSubscriberRegistry) as any;
 
@@ -600,7 +821,7 @@ export class MeghApplication implements IMeghApplication {
         });
       };
     } catch (e) {
-      console.warn("[Megh] Socket handler error:", e);
+      internalLogger("realtime").warn({ err: e }, "Socket handler error");
     }
   }
 
@@ -614,6 +835,9 @@ export class MeghApplication implements IMeghApplication {
   }
   mapPut<T extends (...args: any[]) => any>(path: string = "", fn: T) {
     return this.router.mapPut(path, fn);
+  }
+  mapPatch<T extends (...args: any[]) => any>(path: string = "", fn: T) {
+    return this.router.mapPatch(path, fn);
   }
   mapDelete<T extends (...args: any[]) => any>(path: string = "", fn: T) {
     return this.router.mapDelete(path, fn);
@@ -659,14 +883,45 @@ export class MeghApplication implements IMeghApplication {
   }
 
   private async _close() {
+    if (this.signalHandler) {
+      process.removeListener("SIGTERM", this.signalHandler);
+      process.removeListener("SIGINT", this.signalHandler);
+      this.signalHandler = null;
+    }
     await this.app.close();
-    this.scheduler.stopAll();
+    // Stops every job and waits for runs already in progress.
+    await this.scheduler.stopAll();
     await this._closeWorkers();
+    if (this.usesCache) {
+      try {
+        await CacheManager.close();
+      } catch (err) {
+        internalLogger("app").error({ err }, "Closing the cache failed");
+      }
+    }
+    if (this.ownedRateLimitStore) {
+      try {
+        await this.ownedRateLimitStore.close?.();
+      } catch (err) {
+        internalLogger("app").error({ err }, "Closing the rate limiter failed");
+      }
+      this.ownedRateLimitStore = null;
+    }
+    if (this.usesMail) {
+      try {
+        await Mailer.close();
+      } catch (err) {
+        internalLogger("app").error(
+          { err },
+          "Closing the mail transports failed",
+        );
+      }
+    }
     for (const hook of [...this.lifecycleHooks.close].reverse()) {
       try {
         await hook();
       } catch (err) {
-        console.error("[Megh] onClose hook failed:", err);
+        internalLogger("app").error({ err }, "onClose hook failed");
       }
     }
   }
@@ -686,60 +941,94 @@ export class MeghApplication implements IMeghApplication {
   // ── Run ──────────────────────────────────────────────────────────────────
 
   private async _autoSchedulerTasks(): Promise<void> {
-    const isTsNode =
-      process.env.TS_NODE_DEV ||
-      process.env.TS_NODE_PROJECT ||
-      (process as any)[Symbol.for("ts-node.register.instance")];
-    const nodePath = require("path");
-    const nodeFs = require("fs");
-    const { isScheduledTask } = require("../schedule-registry");
-    const dir = nodePath.join(process.cwd(), this.registerSchedulerPath);
-    const resolvedDir = isTsNode ? dir : dir.replace("src", "dist");
-    try {
-      const files = nodeFs.readdirSync(resolvedDir, {
-        recursive: true,
-        encoding: "utf-8",
-      }) as string[];
-      for (const file of files) {
-        const isTest = /\.(test|spec|e2e-spec)\.(ts|js)$/.test(file);
-        if (isTest) continue;
-        if (isTsNode ? file.endsWith(".ts") : file.endsWith(".js")) {
-          const mod = await import(nodePath.join(resolvedDir, file));
-          for (const exported of Object.values(mod)) {
-            if (typeof exported === "function" && isScheduledTask(exported)) {
-              if (
-                !this.schedulerTasks.some(
-                  (t) => t.name === (exported as any).name,
-                )
-              ) {
-                this.schedulerTasks.push(exported);
-                this.scheduler.addTaskClasses([exported as any]);
-              }
-            }
-          }
-        }
+    const resolvedDir = resolveSourceDir(
+      this.registerSchedulerPath,
+      isTypeScriptRuntime(),
+    );
+    await scanModules(resolvedDir, "tasks", {
+      visit: (exports) => this.collectTasks(exports),
+    });
+  }
+
+  private collectTasks(exports: unknown[]) {
+    for (const exported of exports) {
+      if (
+        typeof exported === "function" &&
+        isScheduledTask(exported) &&
+        !this.schedulerTasks.includes(exported)
+      ) {
+        this.schedulerTasks.push(exported);
+        this.scheduler.addTaskClasses([exported as Constructor]);
       }
-    } catch (e) {
-      console.warn(
-        "[Megh] Could not auto-register tasks from " + resolvedDir,
-        e,
-      );
     }
   }
 
-  async run(port: number = 4000, fn?: CallableFunction): Promise<void> {
+  /** Rate limiting, error handling, Fastify `ready()` and Socket.IO. */
+  private async finishStartup() {
+    this.installRateLimiting();
+    this.installErrorHandling();
+
+    await this.app.ready();
+
+    if (this._hasWebsocket) {
+      // @ts-ignore
+      if (!this.app.io) {
+        throw new Error(
+          "Socket.IO not initialized. Make sure fastify-socket.io is registered correctly.",
+        );
+      }
+      // ✅ lazy — resolve SocketIoServer token only when websocket is ready
+      try {
+        const { SocketIoServer } = require("../realtime/websocket");
+        // @ts-ignore
+        Container.set(SocketIoServer, this.app.io);
+        // The app's authentication handler runs on the handshake and sets
+        // socket.data.user, which @PrivateChannel listeners require.
+        const authentication = this.router.getAuthenticationHandler();
+        if (authentication) {
+          const { handshakeAuthentication } = require("../realtime/handshake");
+          // @ts-ignore
+          this.app.io.use(
+            handshakeAuthentication(Container.get(authentication) as any),
+          );
+        }
+        // @ts-ignore
+        await this.app.io.on("connection", this.handleSocket.bind(this));
+      } catch (e) {
+        internalLogger("realtime").warn({ err: e }, "WebSocket setup error");
+      }
+    }
+  }
+
+  /**
+   * Start the server.
+   *
+   *   await app.run(3000)
+   *   await app.run(3000, { host: "127.0.0.1" })
+   *
+   * The port defaults to the `PORT` environment variable, else `4000`. The
+   * host defaults to the `HOST` environment variable, else `0.0.0.0` so the
+   * app is reachable inside containers.
+   */
+  async run(
+    port?: number,
+    options?: RunOptions | CallableFunction,
+  ): Promise<void> {
+    const fn = typeof options === "function" ? options : options?.onListen;
+    const runOptions: RunOptions = typeof options === "object" ? options : {};
     if (this.alreadyRun) throw new SystemUseError("App already running");
+    const listenPort = port ?? portFromEnv();
     this.alreadyRun = true;
+
+    // Settings first: a bad environment or config fails before anything starts.
+    for (const schema of this.envSchemas) validateEnv(schema);
+    validateConfigSchemas();
 
     if (this.hasSwagger) {
       await this.initSwagger(this.globalSwaggerOptions);
     }
 
     await this.runHooks(this.lifecycleHooks.init);
-
-    if (this.isMapFeatures) {
-      this._mapFeatures();
-    }
 
     if (this.registerControllerAuto) {
       await this.autoControllers();
@@ -757,106 +1046,82 @@ export class MeghApplication implements IMeghApplication {
       this.scheduler.start();
     }
 
-    this.app.setErrorHandler((error: any, request, reply) => {
-      const isDev = this.isDevelopment();
-      const timestamp = new Date().toISOString();
-      const requestInfo = `${request.method} ${request.url}`;
-
-      // ✅ Handle Fastify AJV validation errors — these come with statusCode 400
-      if ((error as any).statusCode === 400 || (error as any).validation) {
-        console.warn(
-          `[${timestamp}] HTTP 400 ${requestInfo} — ${error.message}`,
-        );
-        return reply.status(400).send({
-          code: 400,
-          status: "Error",
-          message: error.message,
-          errors: (error as any).validation ?? undefined,
-        });
-      }
-
-      if (error instanceof BaseHttpException) {
-        const code = error.code || 500;
-        console.warn(
-          `[${timestamp}] HTTP ${code} ${requestInfo} — ${error.message}`,
-        );
-        // 4xx messages are written for the client; 5xx ones describe server
-        // internals and are only shown in development.
-        const expose = isDev || code < 500;
-        return reply
-          .status(code)
-          .type("application/json")
-          .serializer((payload: any) => JSON.stringify(payload))
-          .send({
-            code,
-            status: "Error",
-            message: expose ? error.message : "Internal Server Error",
-            ...(expose && { data: error.payload }),
-          });
-      }
-
-      // Unexpected errors
-      console.error(`\n❌ UNHANDLED ERROR @ ${timestamp}`);
-      console.error(`   ${requestInfo}`);
-      console.error(`   ${error.name}: ${error.message}`);
-      if (error.stack) {
-        console.error(
-          `   Stack:\n${error.stack
-            .split("\n")
-            .slice(1)
-            .map((l: any) => `      ${l.trim()}`)
-            .join("\n")}`,
-        );
-      }
-      if (isDev) {
-        console.error("   Params:", JSON.stringify(request.params));
-        console.error("   Query: ", JSON.stringify(request.query));
-        console.error("   Body:  ", JSON.stringify(request.body));
-      }
-      console.error("");
-
-      return reply.status(500).send({
-        code: 500,
-        status: "Error",
-        message: isDev ? error.message : "Internal Server Error",
-        ...(isDev && {
-          error: error.name,
-          stack: error.stack?.split("\n").slice(0, 5),
-        }),
-      });
-    });
-
-    await this.app.ready();
-
-    if (this._hasWebsocket) {
-      // @ts-ignore
-      if (!this.app.io) {
-        throw new Error(
-          "Socket.IO not initialized. Make sure fastify-socket.io is registered correctly.",
-        );
-      }
-      // ✅ lazy — resolve SocketIoServer token only when websocket is ready
-      try {
-        const { SocketIoServer } = require("../realtime/websocket");
-        // @ts-ignore
-        Container.set(SocketIoServer, this.app.io);
-        // @ts-ignore
-        await this.app.io.on("connection", this.handleSocket.bind(this));
-      } catch (e) {
-        console.warn("[Megh] WebSocket setup error:", e);
-      }
+    try {
+      await this.finishStartup();
+    } catch (err) {
+      // Startup failed after the jobs started: stop them, or their timers
+      // keep running (and the process alive) for an app that never served.
+      await this.scheduler.stopAll();
+      throw err;
     }
 
-    const gracefulStop = async () => {
-      await this.close();
-      process.exit(0);
+    const timeout = runOptions.shutdownTimeout ?? 10_000;
+    const gracefulStop = async (signal: NodeJS.Signals) => {
+      const log = internalLogger("app");
+      log.info({ signal }, "Shutting down");
+      // A hung close (open keep-alive sockets, a stuck hook) must not keep
+      // the process alive forever.
+      const timer = setTimeout(() => {
+        log.error({ timeout }, "Shutdown timed out; exiting");
+        process.exit(1);
+      }, timeout);
+      timer.unref();
+      try {
+        await this.close();
+        process.exit(0);
+      } catch (err) {
+        log.error({ err }, "Shutdown failed");
+        process.exit(1);
+      }
     };
+    this.signalHandler = gracefulStop;
     process.once("SIGTERM", gracefulStop);
     process.once("SIGINT", gracefulStop);
 
-    await this.app.listen({ port });
-    console.log(`Application running on http://127.0.0.1:${port}`);
+    const host = runOptions.host ?? process.env.HOST ?? "0.0.0.0";
+    let address: string;
+    try {
+      address = await this.app.listen({ port: listenPort, host });
+    } catch (err) {
+      process.removeListener("SIGTERM", gracefulStop);
+      process.removeListener("SIGINT", gracefulStop);
+      this.signalHandler = null;
+      await this.scheduler.stopAll();
+      throw err;
+    }
+    internalLogger("app").info(
+      { address },
+      `Application running on ${address}`,
+    );
     await this.runHooks(this.lifecycleHooks.ready);
     if (fn) fn();
   }
+}
+
+/** The port from the `PORT` environment variable, else 4000. */
+function portFromEnv(): number {
+  const raw = process.env.PORT?.trim();
+  if (!raw) return 4000;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new SystemUseError(
+      `Invalid PORT "${process.env.PORT}": expected a whole number from 0 to 65535.`,
+    );
+  }
+  return port;
+}
+
+/** The security scheme and requirement for `useOpenApi({ auth })`. */
+function openApiSecurity(
+  auth: OpenApiUiOptions["auth"],
+):
+  { requirement: Record<string, string[]>; scheme: [string, any] } | undefined {
+  if (!auth) return undefined;
+  const [name, scheme] =
+    auth === "bearer"
+      ? ["bearerAuth", { type: "http", scheme: "bearer", bearerFormat: "JWT" }]
+      : auth === "apiKey"
+        ? ["apiKey", { type: "apiKey", in: "header", name: "X-API-Key" }]
+        : ["auth", auth];
+  return { requirement: { [name]: [] }, scheme: [name, scheme] };
 }

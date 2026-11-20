@@ -16,6 +16,9 @@ export * from "./core/testing";
 // ─── HTTP ────────────────────────────────────────────────────────────────────
 export * from "./http";
 
+// ─── Validation (class-validator / class-transformer compatible) ─────────────
+export * from "./validator";
+
 // ─── Views ───────────────────────────────────────────────────────────────────
 export * from "./view";
 
@@ -40,8 +43,16 @@ export * from "./queue";
 // types explicitly for consumers writing handler signatures.
 export type { Job, JobsOptions } from "./queue/queue";
 
+// ─── Mail ────────────────────────────────────────────────────────────────────
+export * from "./mail";
+
 // ─── Scheduler ───────────────────────────────────────────────────────────────
 export * from "./scheduler/schedule-decorator";
+export { MeghScheduler } from "./scheduler/scheduler";
+export type {
+  BaseJobOptions,
+  CronOptions,
+} from "./scheduler/schedule-registry";
 
 // ─── Security ────────────────────────────────────────────────────────────────
 export * from "./security";
@@ -51,15 +62,16 @@ export * from "./storage";
 export * from "./realtime";
 export * from "./observability";
 
+// ─── Errors ─────────────────────────────────────────────────────────────────
+export * from "./errors";
+
 // ─── Common ──────────────────────────────────────────────────────────────────
 export * from "./common/decorators";
 export * from "./common/helpers";
 export * from "./common/container";
-export * from "./common/exceptions";
 
 // ─── Convenience aliases ─────────────────────────────────────────────────────
 export const GetSchema = sw.generateSwaggerSchema;
-export const GetObjectSchema = sw.CreateSwaggerObjectSchema;
 export const OpenApiOk = (args1: any) => {
   return sw.OpenApiResponse(200, args1, "Success");
 };
@@ -72,8 +84,15 @@ export * from "./plugins";
 // ─── Dependency injection ────────────────────────────────────────────────────
 export {
   Container as MeghContainer,
+  ContainerError,
   Token,
   Injectable,
   createInjectDecorator,
+  inject,
 } from "./di";
-export type { ContainerApi, Constructable, ServiceIdentifier } from "./di";
+export type {
+  ContainerApi,
+  Constructable,
+  InjectOptions,
+  ServiceIdentifier,
+} from "./di";

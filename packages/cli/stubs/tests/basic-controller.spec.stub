@@ -1,0 +1,19 @@
+import { beforeEach, describe, expect, it } from 'vitest';
+import { MeghTest } from '@meghjs/core';
+import { {ClassName} } from '{import}';
+
+describe('{ClassName}', () => {
+  let controller: {ClassName};
+
+  beforeEach(() => {
+    controller = MeghTest.getController({ClassName});
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+
+  it('GET /{route} answers', () => {
+    expect(controller.index()).toEqual({ message: '{ClassName} works' });
+  });
+});
