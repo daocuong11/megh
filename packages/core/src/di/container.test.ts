@@ -3,8 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Container,
   ContainerError,
+  Inject,
   Injectable,
+  Optional,
   Token,
+  constructWith,
   createInjectDecorator,
   inject,
 } from "./container";
@@ -164,21 +167,102 @@ describe("Container resolution", () => {
     Container.reset();
   });
 
-  it("leaves interface and primitive constructor parameters undefined", () => {
-    interface Options {
-      retries: number;
-    }
-    @Injectable()
-    class Client {
-      constructor(
-        readonly name: string,
-        readonly options: Options,
-      ) {}
+  describe("parameters it can't resolve (#137)", () => {
+    interface PaymentGateway {
+      charge(n: number): Promise<void>;
     }
 
-    const client = Container.get(Client);
-    expect(client.name).toBeUndefined();
-    expect(client.options).toBeUndefined();
+    it("fails on an interface parameter, naming it and the fix", () => {
+      @Injectable()
+      class OrderService {
+        constructor(readonly gateway: PaymentGateway) {}
+      }
+      expect(() => Container.get(OrderService)).toThrow(ContainerError);
+      expect(() => Container.get(OrderService)).toThrow(
+        "Cannot resolve parameter 0 of OrderService: its type is an interface, union or primitive (emitted as Object). Use @Inject(TOKEN)",
+      );
+    });
+
+    it("fails on a union, a string and Object itself", () => {
+      @Injectable()
+      class Union {
+        constructor(readonly v: string | number) {}
+      }
+      @Injectable()
+      class Str {
+        constructor(readonly name: string) {}
+      }
+      @Injectable()
+      class Obj {
+        constructor(readonly o: object) {}
+      }
+      expect(() => Container.get(Union)).toThrow(
+        /parameter 0 of Union.*Object/,
+      );
+      expect(() => Container.get(Str)).toThrow(/parameter 0 of Str.*String/);
+      expect(() => Container.get(Obj)).toThrow(/parameter 0 of Obj.*Object/);
+    });
+
+    it("names the chain when a dependency has the bad parameter", () => {
+      @Injectable()
+      class Inner {
+        constructor(readonly n: number) {}
+      }
+      @Injectable()
+      class Outer {
+        constructor(readonly inner: Inner) {}
+      }
+      expect(() => Container.get(Outer)).toThrow(
+        /Cannot construct Outer -> Inner: Cannot resolve parameter 0 of Inner.*Number/,
+      );
+    });
+
+    it("injects a token with @Inject", () => {
+      const PAYMENTS = new Token<PaymentGateway>("payments");
+      const gateway: PaymentGateway = { charge: async () => {} };
+      Container.set(PAYMENTS, gateway);
+      @Injectable()
+      class OrderService {
+        constructor(@Inject(PAYMENTS) readonly gateway: PaymentGateway) {}
+      }
+      expect(Container.get(OrderService).gateway).toBe(gateway);
+    });
+
+    it("injects undefined with @Optional, or @Inject(..., { optional })", () => {
+      class Unregistered {}
+      const MISSING = new Token<string>("missing");
+      @Injectable()
+      class Client {
+        constructor(
+          @Optional() readonly name: string,
+          @Optional() readonly extra: Unregistered,
+          @Inject(MISSING, { optional: true }) readonly missing: string,
+        ) {}
+      }
+      const client = Container.get(Client);
+      expect(client.name).toBeUndefined();
+      expect(client.extra).toBeUndefined();
+      expect(client.missing).toBeUndefined();
+    });
+
+    it("still resolves a registered class marked @Optional", () => {
+      @Injectable()
+      class Dep {}
+      @Injectable()
+      class Client {
+        constructor(@Optional() readonly dep: Dep) {}
+      }
+      expect(Container.get(Client).dep).toBeInstanceOf(Dep);
+    });
+
+    it("lets overrides stand in for the parameter", () => {
+      @Injectable()
+      class OrderService {
+        constructor(readonly gateway: PaymentGateway) {}
+      }
+      const fake = { charge: async () => {} };
+      expect(constructWith(OrderService, [fake]).gateway).toBe(fake);
+    });
   });
 
   it("knows a decorated class before it is constructed", () => {
