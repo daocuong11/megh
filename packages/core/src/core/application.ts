@@ -137,6 +137,8 @@ export class MeghApplication implements IMeghApplication {
   private rateLimitOptions: RateLimitOptions | undefined;
   /** The rate limit store Megh created, closed on shutdown. */
   private ownedRateLimitStore: RateLimitStore | null = null;
+  /** `server.trustProxy`, which Fastify doesn't expose after construction. */
+  private readonly trustProxy: unknown;
   private health = new HealthRegistry();
   private errorHandler = new MeghErrorHandler({
     isDevelopment: () => this.isDevelopment(),
@@ -146,6 +148,7 @@ export class MeghApplication implements IMeghApplication {
     const requestId = options?.requestId ?? {};
     const requestIdHeader =
       (requestId && requestId.header) || DEFAULT_REQUEST_ID_HEADER;
+    this.trustProxy = options?.server?.trustProxy;
     this.app = Fastify({
       ...(requestId && {
         // genReqId decides; Fastify's own header lookup would trust any value.
@@ -261,7 +264,9 @@ export class MeghApplication implements IMeghApplication {
       // Only @RateLimit() / .rateLimit() routes are limited.
       (this.router.hasRouteRateLimits ? { global: false } : undefined);
     if (!options) return;
-    const { store, ownsStore } = installRateLimit(this.app, options);
+    const { store, ownsStore } = installRateLimit(this.app, options, {
+      trustProxy: this.trustProxy,
+    });
     if (ownsStore) this.ownedRateLimitStore = store;
   }
 
