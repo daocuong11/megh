@@ -165,7 +165,7 @@ export class MeghApplication implements IMeghApplication {
         options?.experimental?.compiledValidation ??
         /^(1|true)$/i.test(process.env.MEGH_COMPILED_VALIDATION ?? ""),
     });
-    if (requestId) installRequestContext(this.app, requestIdHeader);
+    installRequestContext(this.app, requestId ? requestIdHeader : null);
 
     this.pluginNames = registerPlugins(this, options);
     if (this.pluginNames.length) {

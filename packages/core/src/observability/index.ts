@@ -1,5 +1,14 @@
 export * from "./logger";
 export * from "./cache";
-export { getRequestId, DEFAULT_REQUEST_ID_HEADER } from "./request-context";
-export type { RequestIdOptions } from "./request-context";
+export {
+  getRequestId,
+  DEFAULT_REQUEST_ID_HEADER,
+  requestContext,
+  createContextKey,
+} from "./request-context";
+export type {
+  RequestIdOptions,
+  ContextKey,
+  RequestContextInit,
+} from "./request-context";
 export * from "./health";

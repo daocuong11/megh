@@ -15,6 +15,7 @@ import {
 } from "../common/helpers";
 import { Container } from "../di";
 import { internalLogger } from "../observability/internal-logger";
+import { setRequestUser } from "../observability/request-context";
 import {
   CONTROLLER_META_KEY,
   ROUTE_META_KEY,
@@ -766,7 +767,7 @@ export class MeghRouter {
               const user = await _authnInst.authenticate(reqClone);
               if (res.sent) return;
               if (user !== null && user !== undefined) {
-                (reqClone as any).user = user;
+                setRequestUser(reqClone, user);
               }
             }
 
@@ -1124,7 +1125,7 @@ export class MeghRouter {
             const user = await authn.authenticate(request);
             if (res.sent) return;
             if (user !== null && user !== undefined) {
-              (request as any).user = user;
+              setRequestUser(request, user);
             }
           }
           if (value.authorize) {

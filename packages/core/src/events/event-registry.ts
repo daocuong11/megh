@@ -2,6 +2,7 @@
 // Megh Event System
 // ============================================================
 
+import { AsyncLocalStorage } from "async_hooks";
 import { Container } from "../di";
 import { SocketIoServer } from "../realtime/websocket";
 import { internalLogger } from "../observability/internal-logger";
@@ -237,6 +238,12 @@ type QueuedJob = {
   event: MeghEvent;
   entries: ListenerEntry[];
   option: DispatchOption;
+  /**
+   * Runs a function in the async context of the code that queued the job,
+   * so listeners see that request's context (request ID, requestContext),
+   * not the context of whichever job started the queue's loop.
+   */
+  inContext: <R>(fn: () => R) => R;
 };
 
 /** A listener that kept failing after its retries. */
@@ -279,6 +286,7 @@ export class EventQueue {
       event,
       option,
       entries: entries ?? EventRegistry.getInstance().claim(event),
+      inContext: AsyncLocalStorage.snapshot(),
     };
     const wait = parseDelay(option.delay);
 
@@ -341,7 +349,7 @@ export class EventQueue {
     try {
       while (this.jobs.length > 0) {
         const job = this.jobs.shift()!;
-        await this.run(job);
+        await job.inContext(() => this.run(job));
       }
     } finally {
       this.processing = false;
