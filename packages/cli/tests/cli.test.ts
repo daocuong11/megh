@@ -465,10 +465,10 @@ describe("runCli", () => {
     return { write: (s: string) => (out += s), text: () => out };
   };
 
-  it("prints the version under the logo", async () => {
+  it("prints just the version for -v", async () => {
     const o = capture();
     expect(await runCli(["-v"], { writeOut: o.write })).toBe(0);
-    expect(o.text()).toContain(`v${require("../package.json").version}`);
+    expect(o.text().trim()).toBe(require("../package.json").version);
   });
 
   it("returns non-zero for unknown commands", async () => {

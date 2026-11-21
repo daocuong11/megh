@@ -3,53 +3,30 @@ import { c } from "./log";
 import { findProjectRoot, installedVersion } from "./project";
 import { cliVersion } from "./stubs";
 
-/** The Megh logo (a cloud and an M), shrunk to fit a terminal. */
-
-const LOGO = String.raw`
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣠⣤⣤⣀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣴⣶⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣤⣾⣿⣿⣿⡿⠟⠛⠋⠉⠉⠉⠉⠙⠿⣿⣿⠗⠂⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣾⣿⣿⣿⡟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣴⣾⣿⣿⣿⣿⣿⣿⡿⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⣃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣼⣿⣿⣿⣿⠟⠻⠟⠛⠿⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠶⠛⠛⠛⠛⠷⠦⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⣰⣿⣿⠟⠋⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⠈⠱⡀⠀⠀⠀⠀⢀⣶⣤⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⣠⣾⣿⣿⣿⣿⡿⠀⢀⣿⣿⣆⠀⠀⠀⠀⣰⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣹⣿⡇⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⣿⠀⠀⣠⣄⣀⣤⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⣰⣿⡿⠛⠁⠉⠀⠀⠀⢸⣿⣿⣿⣷⠀⢀⣼⣿⣿⣿⡟⠀⣰⣶⣿⣿⣿⣷⡄⠀⣤⣾⣿⣿⣿⣷⣦⠀⣿⣿⣷⣿⣿⣿⣷⡄⠀⠀⠀⢸⣿⣿⢠⣾⣿⣿⣿⣿⣿⡟⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠰⣿⣿⠁⠀⠀⠀⠀⠀⠀⢾⣿⣟⢻⣿⣷⣼⣿⡿⢿⣿⣿⢰⣿⣿⣿⣿⣿⣿⣿⢾⣿⣿⠋⠙⠛⣿⣿⡇⣹⣿⡟⠛⠉⢻⣿⣿⠀⠀⠀⢸⣿⣿⠘⢿⣿⣿⣿⣶⣶⣤⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠠⣿⣿⠀⠀⠀⠀⠀⠀⠀⣾⣿⡏⠀⢿⣿⣿⠟⠁⢸⣿⣿⢸⣿⣿⣿⣛⣿⣛⠛⠸⣿⣿⣶⣤⣴⣿⣿⡏⢻⣿⡇⠀⠀⢸⣿⣿⠀⠀⣀⣼⣿⣿⠀⣈⣩⣟⣛⣿⣿⣿⡇⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠹⣿⣷⡀⠀⠀⠀⠀⠀⣿⣿⠇⠀⠀⠙⠉⠀⠀⠸⣿⣿⠀⠹⢿⣿⣿⣿⣿⣧⠀⠙⠻⠿⠿⣿⣿⣿⡇⢿⣿⠇⠀⠀⢸⣿⡿⣰⣿⣿⣿⣿⠏⢺⣿⣿⣿⣿⣿⣿⠿⠁⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠈⠻⣿⣷⣤⣀⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⣴⣿⣿⣿⣿⣿⡿⠁⠀⠀⠀⠀⠀⢀⣀⣀⣩⣿⣿⡿⠖⠒⠊⠀⠈⠁⠀⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠙⠋⠉⠀⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠙⠋⠉⢁⣀⣠⣤⣴⣶⣿⣿⠿⠻⠛⠉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⣠⣤⣤⣶⣶⣾⣿⡿⠿⠟⠛⠋⠁⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠈⠉⠉⠉⠉⠉⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-`.slice(1);
-// const LOGO = String.raw`
-//              +++++
-//            +++++
-//        *******+
-//      ********     ***
-//    **********    ****
-//  *****  ******  *****
-// +++     ***+*********
-// +++     *** ***** ***
-//  ++     ***   **  ***
-//    ++++ ***       ***
-//      =+++=  #########`.slice(1);
-
 /**
- * Colour the logo. The ASCII logo has the cloud in cyan, the M in bold and the
- * swoosh in cyan; a braille (or any other) logo is cyan throughout.
+ * The "Megh CLI" logo. Kept as strings, not a template literal, because the
+ * art has a backtick in it.
  */
+const LOGO = [
+  "  __  __            _        ____ _     ___",
+  " |  \\/  | ___  __ _| |__    / ___| |   |_ _|",
+  " | |\\/| |/ _ \\/ _` | '_ \\  | |   | |    | |",
+  " | |  | |  __/ (_| | | | | | |___| |___ | |",
+  " |_|  |_|\\___|\\__, |_| |_|  \\____|_____|___|",
+  "              |___/",
+];
+
+/** "Megh" ends before this column and "CLI" starts after it (blank on every line). */
+const SPLIT = 26;
+
+/** Colour a logo line: "Megh" in cyan and "CLI" in red, like the brand logo. */
 function paint(line: string): string {
-  if (!/[+=*#]/.test(line)) return c.cyan(line);
-  return line.replace(/(\++|=+)|(\*+)|(#+)/g, (_, cloud, m, swoosh) =>
-    cloud ? c.cyan(cloud) : m ? c.bold(m) : c.cyan(swoosh),
-  );
+  return c.cyan(line.slice(0, SPLIT)) + c.red(line.slice(SPLIT));
 }
 
-/** The logo plus the name and version, ready to print. Shown by `megh -v` and `megh --info`. */
+/** The logo plus the name and version, ready to print. Shown by `megh --info` (`-i`). */
 export function banner(): string {
-  const art = LOGO.replace(/\n+$/, "").split("\n").map((l) => "  " + paint(l));
+  const art = LOGO.map((l) => "  " + paint(l));
   return [
     ...art,
     "",
