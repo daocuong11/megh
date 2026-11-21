@@ -229,6 +229,28 @@ describe("building a message", () => {
     );
   });
 
+  it("accepts only a single address (#134)", () => {
+    for (const ok of ["a.b+tag@sub.x.io", "o'brien@x.io", "üser@exämple.de"]) {
+      expect(parseAddress(ok).address).toBe(ok);
+    }
+    for (const bad of [
+      "victim@a.com, attacker@evil.com",
+      "victim@a.com;attacker@evil.com",
+      "a b@x.io",
+      "a@b@x.io",
+      "@x.io",
+      "a@",
+      "a@x..io",
+      "\"a\"@x.io",
+      "Ann <ann@x.io>, <evil@x.io>",
+    ]) {
+      expect(() => parseAddress(bad), bad).toThrow(MailError);
+    }
+    expect(() =>
+      parseAddress({ name: "x", address: "victim@a.com>, <attacker@evil.com" }),
+    ).toThrow(/single email address/);
+  });
+
   it("names the subject after the class, and merges envelope recipients", async () => {
     class InviteMail extends Mailable {
       envelope() {

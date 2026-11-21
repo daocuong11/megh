@@ -540,3 +540,42 @@ describe("failover", () => {
     }
   });
 });
+
+describe("one address stays one recipient (#134)", () => {
+  const mailers = {
+    sendgrid: { transport: "sendgrid", apiKey: "sg" },
+    mailgun: { transport: "mailgun", apiKey: "mg", domain: "mg.x.io" },
+    postmark: { transport: "postmark", token: "pm" },
+    resend: { transport: "resend", apiKey: "re" },
+  } as const;
+
+  const smuggled = [
+    "victim@a.com, attacker@evil.com",
+    "victim@a.com; attacker@evil.com",
+    { name: "x", address: "victim@a.com>, <attacker@evil.com" },
+  ];
+
+  for (const [name, config] of Object.entries(mailers)) {
+    it(`${name}: rejects an address that would reach a second recipient`, async () => {
+      Mailer.configure({
+        default: name,
+        from: "shop@x.io",
+        mailers: { [name]: config },
+      });
+      for (const to of smuggled) {
+        // Rejected when the address is given, before anything is sent.
+        await expect(
+          (async () => new Mailer().to(to as any).send(new InvoiceMail()))(),
+        ).rejects.toThrow(MailError);
+        await expect(
+          (async () =>
+            new Mailer()
+              .to("ann@x.io")
+              .cc(to as any)
+              .send(new InvoiceMail()))(),
+        ).rejects.toThrow(/single email address/);
+      }
+      expect(calls).toHaveLength(0);
+    });
+  }
+});

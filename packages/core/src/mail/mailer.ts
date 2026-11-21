@@ -391,17 +391,33 @@ export async function buildMessage(
   return message;
 }
 
-/** Normalize one address; rejects line breaks, which could inject headers. */
+/**
+ * One address: `local@domain`, with nothing that could split it into
+ * several recipients (`,` `;`), close or open an angle-addr (`<` `>`), quote
+ * (`"`) or space. Quoted local parts aren't supported.
+ */
+const ADDR_SPEC =
+  /^[^\s@,;<>"()[\]\\]{1,64}@[^\s@,;<>"()[\]\\.]+(\.[^\s@,;<>"()[\]\\.]+)*$/u;
+
+/**
+ * Normalize one address. Rejects line breaks, which could inject headers,
+ * and anything that isn't a single `local@domain` address: the HTTP
+ * transports pass addresses on as-is, so `"a@x.io, b@evil.io"` would
+ * otherwise reach two recipients.
+ */
 export function parseAddress(input: MailAddressLike): MailAddress {
   const parsed: MailAddress =
     typeof input === "string" ? parseAddressString(input) : { ...input };
   parsed.address = parsed.address?.trim();
-  if (!parsed.address || !parsed.address.includes("@")) {
+  assertSingleLine(
+    "An email address",
+    (parsed.address ?? "") + (parsed.name ?? ""),
+  );
+  if (!parsed.address || !ADDR_SPEC.test(parsed.address)) {
     throw new MailError(
-      `"${typeof input === "string" ? input : input.address}" is not an email address.`,
+      `"${typeof input === "string" ? input : input.address}" is not a single email address.`,
     );
   }
-  assertSingleLine("An email address", parsed.address + (parsed.name ?? ""));
   if (!parsed.name) delete parsed.name;
   return parsed;
 }
@@ -409,7 +425,12 @@ export function parseAddress(input: MailAddressLike): MailAddress {
 function parseAddressString(value: string): MailAddress {
   const match = value.match(/^\s*(.*?)\s*<([^<>]+)>\s*$/);
   if (!match) return { address: value };
-  const name = match[1].replace(/^"(.*)"$/, "$1").trim();
+  const quoted = /^"(.*)"$/.exec(match[1]);
+  // An unquoted name with `,` `;` `<` `>` is a list of addresses, not one.
+  if (!quoted && /[,;<>]/.test(match[1])) {
+    throw new MailError(`"${value}" is not a single email address.`);
+  }
+  const name = (quoted ? quoted[1] : match[1]).trim();
   return name ? { name, address: match[2] } : { address: match[2] };
 }
 

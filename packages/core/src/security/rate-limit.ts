@@ -52,7 +52,8 @@ export interface RateLimitOptions extends RouteRateLimitOptions {
   window?: RateLimitWindow;
   /**
    * How to tell clients apart. Defaults to `request.ip`; behind a proxy, set
-   * `server.trustProxy` so that is the client's address.
+   * `server.trustProxy` to a hop count or the proxy's address (not `true`)
+   * so that is the client's address.
    */
   key?: (request: IRequest) => string | Promise<string>;
   /** Return `true` to let a request through uncounted, e.g. an internal IP. */
@@ -291,15 +292,31 @@ const defaultKey = (request: IRequest) =>
   (request as unknown as FastifyRequest).ip;
 
 /**
+ * With `trustProxy: true`, Fastify takes `request.ip` from the leftmost
+ * `X-Forwarded-For` entry, which the client controls: nginx and AWS ALB
+ * append to the header rather than replace it. Each spoofed value would get
+ * a fresh counter, so limits keyed by IP stop nothing.
+ */
+function warnTrustingEveryProxy() {
+  internalLogger("rate-limit").warn(
+    "[Megh] Rate limiting with server.trustProxy: true. Clients can spoof X-Forwarded-For " +
+      "and get a fresh counter per request. Trust a hop count or the proxy's address " +
+      "instead, e.g. trustProxy: 1 or trustProxy: '10.0.0.0/8'.",
+  );
+}
+
+/**
  * Count requests per client and answer 429 over the limit. Returns the
  * store, so the app can close it on shutdown when it created it.
  */
 export function installRateLimit(
   app: FastifyInstance,
   options: RateLimitOptions = {},
+  server: { trustProxy?: unknown } = {},
 ): { store: RateLimitStore; ownsStore: boolean } {
   const max = options.max ?? DEFAULT_MAX;
   assertMax(max);
+  if (server.trustProxy === true) warnTrustingEveryProxy();
   const windowMs = parseWindow(options.window ?? DEFAULT_WINDOW_MS);
   const appLimit: ResolvedLimit = {
     max,
