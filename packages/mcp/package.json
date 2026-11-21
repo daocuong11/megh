@@ -1,0 +1,59 @@
+{
+  "name": "@meghjs/mcp",
+  "version": "0.6.5",
+  "description": "Model Context Protocol server that lets AI assistants inspect and scaffold Megh applications",
+  "author": "Tareq Hossain",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "megh-mcp": "dist/bin.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json && node scripts/copy-docs.js",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "test": "vitest run",
+    "watch": "tsc -p tsconfig.json --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "megh",
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "claude",
+    "typescript",
+    "fastify"
+  ],
+  "dependencies": {
+    "@meghjs/cli": "^0.6.5",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meghjs/megh.git",
+    "directory": "packages/mcp"
+  },
+  "homepage": "https://meghjs.github.io/ai/mcp",
+  "bugs": {
+    "url": "https://github.com/meghjs/megh/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
