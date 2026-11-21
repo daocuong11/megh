@@ -1,0 +1,22 @@
+import { beforeAll, describe, expect, it } from 'vitest';
+import { MeghTest, ViewResult } from '@meghjs/core';
+import { HomeController } from './home.controller';
+
+describe('HomeController', () => {
+  let controller!: HomeController;
+
+  beforeAll(() => {
+    controller = MeghTest.getController(HomeController);
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+
+  it('should render the home page', () => {
+    const result = controller.index();
+    expect(result).toBeInstanceOf(ViewResult);
+    expect(result.name).toBe('pages.home');
+    expect(result.data).toEqual({ message: 'Hello World!' });
+  });
+});

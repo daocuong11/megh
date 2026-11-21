@@ -20,7 +20,7 @@ Built with [Megh](https://github.com/meghjs/megh).
 ## Project Structure
 
 ```
-src/
+{Views}src/
 {Tree}├── app.ts         # App setup
 └── serve.ts       # Entry point
 ```

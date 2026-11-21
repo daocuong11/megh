@@ -1,0 +1,4 @@
+{{-- Use it as <x-{Tag}>...</x-{Tag}>; attributes become variables here. --}}
+<div class="{Tag}">
+  {{ slot }}
+</div>

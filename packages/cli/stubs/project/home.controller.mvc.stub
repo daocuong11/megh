@@ -1,0 +1,13 @@
+import { ApiController, Get, Results } from '@meghjs/core';
+import { HomeService } from '../services/home.service';
+
+@ApiController('/')
+export class HomeController {
+  constructor(private readonly homeService: HomeService) {}
+
+  /** Renders views/pages/home.megh.html inside views/layouts/app.megh.html. */
+  @Get()
+  index() {
+    return Results.View('pages.home', this.homeService.sayHello());
+  }
+}
