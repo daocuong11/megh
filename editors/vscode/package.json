@@ -6,11 +6,16 @@
   "publisher": "meghjs",
   "author": "Tareq Hossain",
   "license": "MIT",
+  "icon": "images/icon.png",
   "private": true,
   "repository": {
     "type": "git",
-    "url": "https://github.com/meghjs/meghjs",
+    "url": "https://github.com/meghjs/megh",
     "directory": "editors/vscode"
+  },
+  "homepage": "https://meghjs.github.io/advanced/views",
+  "bugs": {
+    "url": "https://github.com/meghjs/megh/issues"
   },
   "engines": {
     "vscode": "^1.75.0"
