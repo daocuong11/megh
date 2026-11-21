@@ -1,6 +1,8 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MeghApplication } from "../core/application";
+import type { MeghApplicationOptions } from "../core/interfaces";
+import { LoggerService } from "../observability/logger";
 import { ApiController } from "../http/controller";
 import { Get, Post } from "../http/route-methods";
 import {
@@ -43,8 +45,12 @@ const apps: MeghApplication[] = [];
 async function boot(
   setup: (app: MeghApplication) => void,
   controllers: any[] = [LimitedController],
+  options: MeghApplicationOptions = {},
 ) {
-  const app = MeghApplication.getInternalApp({ autoloadPlugins: false });
+  const app = MeghApplication.getInternalApp({
+    autoloadPlugins: false,
+    ...options,
+  });
   app.useErrorLogger(false);
   app.useControllers(controllers);
   setup(app);
@@ -249,6 +255,55 @@ describe("useRateLimit", () => {
     await hit(app);
     await app.close();
     expect(close).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("rate limiting behind a proxy (#133)", () => {
+  // nginx and AWS ALB append the real client to X-Forwarded-For, so the
+  // leftmost entry is whatever the client sent.
+  const spoofed = (app: MeghApplication, fake: string) =>
+    app.app.inject({
+      url: "/rl/login",
+      method: "POST",
+      remoteAddress: "10.0.0.1",
+      headers: { "x-forwarded-for": `${fake}, 203.0.113.9` },
+    });
+
+  it("still limits a client that spoofs X-Forwarded-For with trustProxy: 1", async () => {
+    const app = await boot(() => {}, [LimitedController], {
+      server: { trustProxy: 1 },
+    });
+    expect((await spoofed(app, "1.1.1.1")).statusCode).toBe(200);
+    expect((await spoofed(app, "2.2.2.2")).statusCode).toBe(200);
+    expect((await spoofed(app, "3.3.3.3")).statusCode).toBe(429);
+  });
+
+  it("warns at boot when trustProxy is true", async () => {
+    const warn = vi.fn();
+    vi.spyOn(LoggerService, "child").mockReturnValue({
+      warn,
+      error: () => {},
+      info: () => {},
+      debug: () => {},
+    } as any);
+    await boot(() => {}, [LimitedController], { server: { trustProxy: true } });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("trustProxy: true"),
+    );
+  });
+
+  it("does not warn for a hop count", async () => {
+    const warn = vi.fn();
+    vi.spyOn(LoggerService, "child").mockReturnValue({
+      warn,
+      error: () => {},
+      info: () => {},
+      debug: () => {},
+    } as any);
+    await boot(() => {}, [LimitedController], { server: { trustProxy: 1 } });
+    expect(warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("trustProxy"),
+    );
   });
 });
 
