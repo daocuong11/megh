@@ -79,8 +79,9 @@ export const BLOCKS: Record<string, string[]> = {
 
 /** Branch directives and the blocks they belong to. */
 export const BRANCHES: Record<string, string[]> = {
-  elseif: ['if'],
-  else: ['if', 'unless'],
+  // Matches core: @else and @elseif work in @if, @unless and @isset.
+  elseif: ['if', 'unless', 'isset'],
+  else: ['if', 'unless', 'isset'],
 };
 
 export const CLOSERS = new Set(Object.values(BLOCKS).flat());

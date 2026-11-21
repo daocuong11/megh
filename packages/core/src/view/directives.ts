@@ -61,12 +61,12 @@ export const builtinDirectives: ReadonlyMap<string, DirectiveHandler> = new Map<
       return `if (${ctx.expect(a, t)}) {`;
     },
     elseif: (a, ctx, t) => {
-      const f = ctx.peek(["if", "unless"], t);
+      const f = ctx.peek(["if", "unless", "isset"], t);
       if (f.hasElse) throw ctx.error("@elseif after @else", t);
       return `} else if (${ctx.expect(a, t)}) {`;
     },
     else: (a, ctx, t) => {
-      const f = ctx.peek(["if", "unless"], t);
+      const f = ctx.peek(["if", "unless", "isset"], t);
       if (f.hasElse) throw ctx.error("Duplicate @else", t);
       f.hasElse = true;
       return "} else {";

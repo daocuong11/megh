@@ -33,6 +33,19 @@ describe("ViewEngine", () => {
     expect(r("@media (x) {}")).toBe("@media (x) {}");
   });
 
+  it("leaves <x-component> tags inside comments alone", () => {
+    expect(r("a{{-- use <x-alert>hi</x-alert> --}}b")).toBe("ab");
+    expect(
+      r("{{-- <x-slot:title>T</x-slot> and <x-badge/> --}}<p>ok</p>"),
+    ).toBe("<p>ok</p>");
+    // Tags outside the comment still compile.
+    expect(r("{{-- <x-alert> --}}<x-alert type=\"info\">hi</x-alert>")).toMatch(
+      /<div class="alert alert-info">[\s\S]*hi/,
+    );
+    // An unterminated comment is still reported, not closed by a rewritten tag.
+    expect(() => r("a{{-- <x-alert>hi</x-alert>")).toThrow(TemplateError);
+  });
+
   it("supports if / elseif / else / unless / isset", () => {
     const src = "@if(n > 1)many @elseif(n === 1)one @else none @endif";
     expect(r(src, { n: 5 })).toBe("many ");
@@ -40,6 +53,14 @@ describe("ViewEngine", () => {
     expect(r(src, { n: 0 })).toBe(" none ");
     expect(r("@unless(ok)no @endunless", { ok: false })).toBe("no ");
     expect(r("@isset(user.profile.bio)yes @endisset-", { user: {} })).toBe("-");
+    // @isset takes @else and @elseif, as in Blade.
+    const isset = "@isset(href)link @elseif(title)title @else plain @endisset";
+    expect(r(isset, { href: "/" })).toBe("link ");
+    expect(r(isset, { title: "T" })).toBe("title ");
+    expect(r(isset, { title: "" })).toBe(" plain ");
+    expect(() => r("@isset(a)x @else y @else z @endisset")).toThrow(
+      /Duplicate @else/,
+    );
     // Like Blade, a directive glued to a word is plain text.
     expect(r("a@if(true)", {})).toBe("a@if(true)");
     // Parens and strings inside directive arguments.
