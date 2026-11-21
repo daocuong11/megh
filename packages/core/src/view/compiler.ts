@@ -209,8 +209,19 @@ function toProps(attrs: string): string {
  * word (`Hi<x-badge/>`), where "@" would otherwise look like part of an email
  * address. The one behind does the same for whatever follows (`<x-badge/>@endif`),
  * and stops text such as `</x-alert>(note)` being read as directive arguments.
+ *
+ * `{{-- comments --}}` are copied as they are, so a tag mentioned in a comment
+ * is never compiled. An unterminated comment runs to the end of the source and
+ * is left for the lexer to report.
  */
 export function compileComponentTags(src: string): string {
+  return src
+    .split(/(\{\{--[\s\S]*?(?:--\}\}|$))/)
+    .map((part, i) => (i % 2 === 1 ? part : compileTagsInText(part)))
+    .join("");
+}
+
+function compileTagsInText(src: string): string {
   const d = (directive: string) => `{{----}}${directive}{{----}}`;
   return src
     .replace(

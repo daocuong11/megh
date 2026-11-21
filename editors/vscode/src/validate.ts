@@ -159,7 +159,7 @@ export function validate(text: string, options: ValidateOptions = {}): Problem[]
       } else if (name in BRANCHES) {
         const top = blocks[blocks.length - 1];
         if (!top || !BRANCHES[name].includes(top.range.name!)) {
-          problems.push({ ...head, message: `@${name} outside ${BRANCHES[name].map((b) => '@' + b).join(' or ')}`, severity: 'error' });
+          problems.push({ ...head, message: `@${name} outside ${BRANCHES[name].map((b) => '@' + b).join(', ').replace(/, ([^,]*)$/, ' or $1')}`, severity: 'error' });
           continue;
         }
         if (!top.firstBranch) top.firstBranch = tags;
