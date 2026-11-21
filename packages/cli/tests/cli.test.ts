@@ -134,6 +134,47 @@ export class HomeController {
       "GET /health health",
     ]);
   });
+
+  it("reads @Authorized and @Public for the AUTH column (#142)", () => {
+    const src = `
+import { ApiController, Authorized, Get, Public } from '@meghjs/core';
+
+@Authorized('jwt')
+@ApiController('/admin')
+export class AdminController {
+  @Get('/')
+  list() {}
+}
+
+@ApiController('/posts')
+export class PostController {
+  @Public()
+  @Get('/')
+  list() { return []; }
+
+  @Authorized({ name: 'editor', roles: ['x'] })
+  @Get('/drafts')
+  drafts() {}
+
+  @Get('/:id')
+  show() {}
+}
+
+@Public()
+@ApiController
+export class HealthController {
+  @Authorized()
+  @Get('/deep')
+  deep() {}
+}`;
+    expect(scanRoutes(src, "a.ts").map((r) => `${r.path} ${r.auth}`)).toEqual([
+      "/admin authorized:jwt",
+      "/posts public",
+      "/posts/drafts authorized:editor",
+      "/posts/:id default",
+      "/deep authorized",
+    ]);
+  });
 });
 
 describe("generators", () => {

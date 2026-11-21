@@ -7,7 +7,21 @@ import { projectLayout } from "../utils/entry";
 import { c } from "../utils/log";
 import { requireProjectRoot } from "../utils/project";
 
-export type Route = { method: string; path: string; controller: string; handler: string; file: string };
+/**
+ * How a route is protected:
+ * - `authorized` (or `authorized:<name>`): `@Authorized` on the route or its controller.
+ * - `public`: `@Public()`, which skips a `useAuthorization` default.
+ * - `default`: neither; protected only when the app sets `useAuthorization(handler, { default })`.
+ */
+export type RouteAuth = "public" | "default" | `authorized${string}`;
+export type Route = {
+  method: string;
+  path: string;
+  controller: string;
+  handler: string;
+  file: string;
+  auth: RouteAuth;
+};
 export type RouteListOptions = { cwd?: string; json?: boolean; static?: boolean };
 
 export function joinRoute(...parts: string[]): string {
@@ -53,12 +67,30 @@ for (const [src, compiled] of files) {
     if (!key) continue;
     const meta = Reflect.getOwnMetadata(key, value) || {};
     const proto = value.prototype;
+    const byName = (target, desc) => (Reflect.getMetadataKeys(target) || []).find(
+      (k) => typeof k === "symbol" && k.description === desc);
+    const authOf = (target, name) => {
+      const keys = name === undefined ? Reflect.getMetadataKeys(target) : Reflect.getMetadataKeys(target, name);
+      const find = (desc) => (keys || []).find((k) => typeof k === "symbol" && k.description === desc);
+      const a = find("idatasource:authorization");
+      const p = find("megh:public");
+      return {
+        authorized: a ? (name === undefined ? Reflect.getMetadata(a, target) : Reflect.getMetadata(a, target, name)) : undefined,
+        isPublic: !!p,
+      };
+    };
+    const cls = authOf(value);
     for (const name of Object.getOwnPropertyNames(proto)) {
       if (name === "constructor") continue;
       const method = Reflect.getMetadata("route:method", proto, name);
       if (!method) continue;
+      const own = authOf(value, name);
+      const authorized = own.authorized || cls.authorized;
+      const auth = authorized && authorized.authorize
+        ? "authorized" + (authorized.options && authorized.options.name ? ":" + authorized.options.name : "")
+        : own.isPublic || cls.isPublic ? "public" : "default";
       out.push({ controllerPath: meta.path || "/", method, path: Reflect.getMetadata("route:path", proto, name) || "/",
-        controller: value.name, handler: name, file: src });
+        controller: value.name, handler: name, file: src, auth });
     }
   }
 }
@@ -99,6 +131,7 @@ export function runtimeRoutes(root: string): Route[] {
     controller: r.controller,
     handler: r.handler,
     file: r.file.split(path.sep).join("/"),
+    auth: r.auth ?? "default",
   }));
 }
 
@@ -114,6 +147,30 @@ function decoratorPath(args: string | undefined): string {
   return objPath ? objPath[2] : "/";
 }
 
+/** The `@Decorator(...)` lines directly above the end of `text`. */
+function trailingDecorators(text: string): string {
+  const lines = text.split(/\r?\n/);
+  const kept: string[] = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line === "" && kept.length === 0) continue;
+    if (!line.startsWith("@")) break;
+    kept.unshift(line);
+  }
+  return kept.join("\n");
+}
+
+/** `authorized[:name]` or `public` from the decorators in `text`, if any. */
+function scanAuth(text: string): RouteAuth | undefined {
+  const authorized = text.match(/@Authorized\s*\(([^)]*)\)/);
+  if (authorized) {
+    const args = authorized[1].trim();
+    const name = args.match(STRING)?.[2] ?? args.match(/name\s*:\s*(['"`])((?:(?!\1).)*)\1/)?.[2];
+    return name ? `authorized:${name}` : "authorized";
+  }
+  return /@Public\s*\(/.test(text) ? "public" : undefined;
+}
+
 /** Scan `@ApiController` classes and their `@Get`/`@Post`/... methods without running any code. */
 export function scanRoutes(source: string, file: string): Route[] {
   const routes: Route[] = [];
@@ -124,15 +181,24 @@ export function scanRoutes(source: string, file: string): Route[] {
     const end = i + 1 < ctrls.length ? ctrls[i + 1].index! : source.length;
     const body = source.slice(start, end);
     const base = decoratorPath(m[1]);
+    // The class's decorators: the lines above @ApiController, and up to `class X`.
+    const classAuth = scanAuth(trailingDecorators(source.slice(0, m.index!)) + m[0]);
     const methodRe =
       /@(Get|Post|Put|Patch|Delete|Options|All)\s*\(([^)]*)\)[\s\S]*?(?<![@\w$])([A-Za-z_$][\w$]*)\s*\(/g;
     for (const r of body.matchAll(methodRe)) {
+      // The method's decorators: the lines above @Get, and up to its name.
+      const own = scanAuth(trailingDecorators(body.slice(0, r.index!)) + r[0]);
+      const auth: RouteAuth =
+        own?.startsWith("authorized") ? own
+        : classAuth?.startsWith("authorized") ? classAuth
+        : own ?? classAuth ?? "default";
       routes.push({
         method: r[1].toUpperCase(),
         path: joinRoute(base, decoratorPath(r[2])),
         controller: m[2],
         handler: r[3],
         file,
+        auth,
       });
     }
   });
@@ -150,8 +216,8 @@ export function staticRoutes(root: string): Route[] {
 
 export function formatRoutes(routes: Route[]): string {
   if (!routes.length) return "No routes found.";
-  const rows = routes.map((r) => [r.method, r.path, `${r.controller}.${r.handler}`]);
-  const head = ["METHOD", "PATH", "HANDLER"];
+  const rows = routes.map((r) => [r.method, r.path, r.auth, `${r.controller}.${r.handler}`]);
+  const head = ["METHOD", "PATH", "AUTH", "HANDLER"];
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map((row) => row[i].length)));
   const fmt = (row: string[]) => row.map((cell, i) => cell.padEnd(widths[i])).join("  ").trimEnd();
   return [c.bold(fmt(head)), ...rows.map(fmt)].join("\n");

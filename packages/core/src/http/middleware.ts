@@ -7,7 +7,7 @@
 import { Injectable } from "../di";
 import { IRequest, IResponse } from "../core/types";
 import { HttpExceptionTypes as HttpException } from "../common/exceptions";
-import { AUTHORIZATION_META_KEY } from "../common/container";
+import { AUTHORIZATION_META_KEY, PUBLIC_META_KEY } from "../common/container";
 import { Constructor } from "../common/helpers";
 
 export abstract class MeghMiddleware {
@@ -59,6 +59,51 @@ export function CanAuthorize(target: { new (...args: any[]): AuthorizeClass }) {
 export type AuthorizedOptions =
   | string // shorthand: the authorizer name
   | { name?: string; [key: string]: any }; // object form: { name, roles, ... }
+
+/**
+ * Leave a controller or route out of the default authorization set with
+ * `useAuthorization(handler, { default })`. Without a default, routes are
+ * public anyway and this has no effect. An explicit `@Authorized` still
+ * applies.
+ *
+ *   @Public()
+ *   @Get("/status")
+ *   status() {}
+ */
+export function Public(): ClassDecorator & MethodDecorator {
+  return function (target: any, propertyKey?: string | symbol) {
+    if (propertyKey !== undefined) {
+      Reflect.defineMetadata(
+        PUBLIC_META_KEY,
+        true,
+        target.constructor,
+        propertyKey,
+      );
+    } else {
+      Reflect.defineMetadata(PUBLIC_META_KEY, true, target);
+    }
+  } as ClassDecorator & MethodDecorator;
+}
+
+/**
+ * What a route without `@Authorized` or `@Public` requires when a default is
+ * set with `useAuthorization(handler, { default })`:
+ *
+ * - `"authenticated"`: a user from `useAuthentication()`, else 401.
+ * - `true`: the default authorizer, like a bare `@Authorized()`.
+ * - a name or `{ name, ...options }`: like `@Authorized(name)`.
+ */
+export type AuthorizationDefault = "authenticated" | true | AuthorizedOptions;
+
+/** Options for `app.useAuthorization(handler, options)`. */
+export interface UseAuthorizationOptions {
+  /**
+   * Protect every controller and inline route that has neither `@Authorized`
+   * nor `@Public`. Off by default. Health probes, the OpenAPI UI and static
+   * files are not routes Megh authorizes, so they stay public.
+   */
+  default?: AuthorizationDefault;
+}
 
 export function Authorized(): ClassDecorator & MethodDecorator;
 export function Authorized(

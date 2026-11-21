@@ -20,7 +20,11 @@ export class SocketContextService {
 export type DispatchOptions = {
   room?: string;
   broadcast?: boolean;
-  transports?: ("socket" | "kafka" | "rabbitmq")[];
+  /**
+   * Only `"socket"` ships in 1.0. Kafka and RabbitMQ transports are not
+   * implemented; passing them throws.
+   */
+  transports?: "socket"[];
   retry?: number;
   retryDelay?: number;
 };
@@ -32,6 +36,17 @@ export class SocketEventDispatcher {
     data: T,
     options: DispatchOptions = {},
   ) {
+    // Validate up front: an unsupported transport is a config error, not a
+    // transient failure worth retrying.
+    for (const transport of options.transports ?? []) {
+      if (transport !== "socket") {
+        throw new Error(
+          `[SocketEventDispatcher] Transport "${transport}" is not implemented in Megh 1.0. ` +
+            "Only \"socket\" is supported.",
+        );
+      }
+    }
+
     const retryCount = options.retry ?? 0;
     const delay = options.retryDelay ?? 300;
 

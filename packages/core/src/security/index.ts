@@ -10,6 +10,7 @@ export {
   RateLimit,
   MemoryRateLimitStore,
   RedisRateLimitStore,
+  rateLimitIpKey,
 } from "./rate-limit";
 export type {
   RateLimitOptions,
@@ -18,4 +19,5 @@ export type {
   RateLimitHit,
   RateLimitWindow,
   RedisEvalClient,
+  MemoryRateLimitStoreOptions,
 } from "./rate-limit";
