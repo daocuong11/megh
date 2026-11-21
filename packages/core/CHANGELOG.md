@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+# [0.7.0](https://github.com/meghjs/megh/compare/v0.6.5...v0.7.0) (2026-11-21)
+
+### Bug Fixes
+
+- **core:** cap the memory rate-limit store and group IPv6 clients by /64 ([#135](https://github.com/meghjs/megh/issues/135)) ([9b22398](https://github.com/meghjs/megh/commit/9b22398a66f3f9431a4362dc35f14d853c047aee))
+- **core:** check mail attachment paths against allowFileAccess, allowUrlAccess and attachmentRoot ([#139](https://github.com/meghjs/megh/issues/139)) ([a6f8c16](https://github.com/meghjs/megh/commit/a6f8c16fd63df05a260f106b5409ad16093fb93c))
+- **core:** export rateLimitIpKey and MemoryRateLimitStoreOptions ([#135](https://github.com/meghjs/megh/issues/135)) ([223356e](https://github.com/meghjs/megh/commit/223356edad172de0d73b1b0694485ea445eb7828))
+- **core:** fail when a constructor parameter can't be resolved ([#137](https://github.com/meghjs/megh/issues/137)) ([5d44c99](https://github.com/meghjs/megh/commit/5d44c99e871e2b1ed4ba764335996403f4618e19))
+- **core:** ignore component tags in view comments; allow [@else](https://github.com/else) in [@isset](https://github.com/isset) ([d647c55](https://github.com/meghjs/megh/commit/d647c55ff2ee8b2305aa69ec21c2b417149ebda3))
+- **core:** reject mail addresses that would reach several recipients ([#134](https://github.com/meghjs/megh/issues/134)) ([42880df](https://github.com/meghjs/megh/commit/42880df88c935a9e75a19a28faf12de0b8ce9c3c))
+- **core:** reject unimplemented kafka/rabbitmq socket transports ([#57](https://github.com/meghjs/megh/issues/57)) ([0df2d09](https://github.com/meghjs/megh/commit/0df2d09c1ef510f0efaf7c645c31c33a5284e1cc))
+- **core:** share a route's rate-limit counter across URI versions ([#136](https://github.com/meghjs/megh/issues/136)) ([24a8976](https://github.com/meghjs/megh/commit/24a8976a44914080418ee525f12418898d545c2e))
+- **core:** warn when rate limiting runs with trustProxy: true ([#133](https://github.com/meghjs/megh/issues/133)) ([e33ddf1](https://github.com/meghjs/megh/commit/e33ddf1aeaf92418c3eeede15f736389a76ddf60))
+- setGlobalPrefix exclude should match inline routes without leading slash ([#138](https://github.com/meghjs/megh/issues/138)) ([3b42bb8](https://github.com/meghjs/megh/commit/3b42bb88fe493f5af6fdc1279e1d970163f05cd2))
+
+### Features
+
+- **core:** add [@react](https://github.com/react) islands to views ([8d429cd](https://github.com/meghjs/megh/commit/8d429cdeb911bc5e684984eec4bb4fa3206a2dee))
+- **core:** add Blade-style view engine ([5761c29](https://github.com/meghjs/megh/commit/5761c29f3783a7b060f4f0391d789ad2a3767657))
+- **core:** add useMethodOverride() for HTML forms ([e7b5d2d](https://github.com/meghjs/megh/commit/e7b5d2d04ed3e206424c4efdae2b81d41022e3d4))
+- **core:** opt-in deny-by-default authorization with @Public() ([#142](https://github.com/meghjs/megh/issues/142)) ([55c2c64](https://github.com/meghjs/megh/commit/55c2c6483c88a51bba13244d293f4c5e405a76ff))
+- **core:** request context API for per-request values ([#141](https://github.com/meghjs/megh/issues/141)) ([6570a46](https://github.com/meghjs/megh/commit/6570a46c0ad21bc1b16284dfe454cd059a549587))
+
 ## [0.6.5](https://github.com/meghjs/megh/compare/v0.6.3...v0.6.5) (2026-11-17)
 
 ### Bug Fixes

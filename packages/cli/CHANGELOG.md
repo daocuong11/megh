@@ -3,6 +3,16 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+# [0.7.0](https://github.com/meghjs/megh/compare/v0.6.5...v0.7.0) (2026-11-21)
+
+### Features
+
+* **cli:** add new --mvc and make:view ([a83c79d](https://github.com/meghjs/megh/commit/a83c79d6211c6c6d600109b9a731538493808b56))
+* **cli:** new Megh CLI logo, shown only by --info ([63f27f7](https://github.com/meghjs/megh/commit/63f27f79d0498889409a54a657ef3f0628f54284))
+* **core:** opt-in deny-by-default authorization with @Public() ([#142](https://github.com/meghjs/megh/issues/142)) ([55c2c64](https://github.com/meghjs/megh/commit/55c2c6483c88a51bba13244d293f4c5e405a76ff))
+
+
+
 ## [0.6.5](https://github.com/meghjs/megh/compare/v0.6.3...v0.6.5) (2026-11-17)
 
 ### Bug Fixes
