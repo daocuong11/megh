@@ -32,7 +32,7 @@ import {
 import { listTemplates, makeFromTemplate, scaffoldDomain } from "./generators/scaffold";
 import { AUTH_STRATEGIES, scaffoldAuth, ROLE_MODES, scaffoldRbac } from "./generators/auth";
 import { parseFieldList } from "./templates/fields";
-import { banner, info } from "./utils/banner";
+import { info } from "./utils/banner";
 import { log } from "./utils/log";
 import { cliVersion } from "./utils/stubs";
 import { withReview } from "./utils/changes";
@@ -94,7 +94,7 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .helpCommand("help [command]", "Show help for a command")
     .showHelpAfterError("(run `megh --help` for usage)")
     .showSuggestionAfterError(true)
-    .option("--info", "Print the logo, CLI, Node.js and OS versions, and the project's Megh packages")
+    .option("-i, --info", "Print the logo, CLI, Node.js and OS versions, and the project's Megh packages")
     .exitOverride();
 
   if (run.writeOut || run.writeErr) {
@@ -603,10 +603,10 @@ function templateOptions(o: Record<string, any>) {
 export async function runCli(args: string[], run: RunOptions = {}): Promise<number> {
   const { program, exitCode } = createProgram(run);
   const argv = normalizeArgv(args);
-  // The logo is only shown here: `megh -v` / `megh --version` and `megh --info`.
-  if (argv.length === 1 && ["-v", "--version", "--info"].includes(argv[0])) {
-    const text = argv[0] === "--info" ? info(run.cwd ?? process.cwd()) : banner();
-    (run.writeOut ?? ((s: string) => process.stdout.write(s)))(`${text}\n`);
+  // The logo is only shown by `megh -i` / `megh --info`. `-v` prints just the
+  // version (through commander), so scripts can read it.
+  if (argv.length === 1 && ["-i", "--info"].includes(argv[0])) {
+    (run.writeOut ?? ((s: string) => process.stdout.write(s)))(`${info(run.cwd ?? process.cwd())}\n`);
     return 0;
   }
   if (argv.length === 0) {

@@ -58,8 +58,8 @@ instead of the default folder. Names may be nested, e.g. `admin/User`: the modul
 `make:model admin/User` writes `src/admin/models/user.model.ts`.
 Every generator except `make:model` and the database ones also writes a
 `<name>.spec.ts` unit test next to the file; `--notest` (or `-nt`) skips it.
-`megh -v` prints the logo and version, and `megh --info` adds the Node.js, OS
-and project package versions.
+`megh -v` prints the version, and `megh --info` (or `-i`) prints the logo with
+the CLI, Node.js, OS and project package versions.
 Run `megh <command> --help` for details.
 
 Generated controllers must be registered in your app with

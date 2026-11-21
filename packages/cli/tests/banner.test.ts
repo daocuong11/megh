@@ -22,15 +22,22 @@ describe("banner", () => {
     for (const line of out.split("\n")) expect(line.length).toBeLessThanOrEqual(80);
   });
 
-  it("is printed by -v and --version, with the version", async () => {
+  it("shows the Megh CLI art", () => {
+    const out = plain(banner());
+    expect(out).toContain(" |  \\/  | ___  __ _| |__    / ___| |   |_ _|");
+    expect(out).toContain("|_|  |_|\\___|\\__, |_| |_|  \\____|_____|___|");
+  });
+
+  it("is not printed by -v and --version, which print only the version", async () => {
     for (const flag of ["-v", "--version"]) {
       const out = await capture([flag]);
-      expect(out).toContain(logoLine());
-      expect(out).toContain(`v${cliVersion()}`);
+      expect(out.trim()).toBe(cliVersion());
+      expect(out).not.toContain(logoLine());
     }
   });
 
-  it("is printed by --info, with the Node.js and OS versions", async () => {
+  it("is printed by --info and -i, with the Node.js and OS versions", async () => {
+    expect(plain(await capture(["-i"]))).toContain(logoLine());
     const out = plain(await capture(["--info"]));
     expect(out).toContain(logoLine());
     expect(out).toContain(process.version);
