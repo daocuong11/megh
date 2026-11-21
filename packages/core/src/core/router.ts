@@ -371,8 +371,9 @@ export class MeghRouter {
     path: string,
     versions: string[] | undefined,
   ): { url: string; constraints?: Record<string, string> }[] {
+    const normalizedPath = formatUrl(path) || "/";
     const excluded = this.prefixExclude.some((e) =>
-      typeof e === "string" ? e === path : e.test(path),
+      typeof e === "string" ? e === normalizedPath : e.test(path),
     );
     const prefix = excluded ? "" : this.globalPrefix;
     const join = (...parts: string[]) => formatUrl(parts.join("/")) || "/";
