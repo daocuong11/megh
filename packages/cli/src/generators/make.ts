@@ -1220,3 +1220,64 @@ export function makeFactory(name: string, opts: MakeFactoryOptions = {}): string
   }
   return file;
 }
+
+export type MakeViewOptions = {
+  /** Directory to start the project-root search from. Defaults to `process.cwd()`. */
+  cwd?: string;
+  force?: boolean;
+  /**
+   * The layout the page extends, in dot notation (`layouts.admin`), or
+   * `false` for a standalone HTML page. Defaults to `layouts.app` when
+   * views/layouts/app.megh.html exists.
+   */
+  layout?: string | false;
+  /** Write an `<x-name>` component to views/components/ instead of a page. */
+  component?: boolean;
+};
+
+/**
+ * A view in views/<name>.megh.html. The name takes dots or slashes:
+ * `make:view pages.about` and `make:view pages/about` both write
+ * views/pages/about.megh.html, rendered with `Results.View('pages.about')`.
+ */
+export function makeView(name: string, opts: MakeViewOptions = {}): string {
+  const projectRoot = requireProjectRoot(opts.cwd ?? process.cwd());
+  const parts = name
+    .replace(/\.megh\.html$/, "")
+    .split(/[./\\]+/)
+    .filter(Boolean)
+    .map((p) => kebabCase(p));
+  if (!parts.length || parts.some((p) => !p)) throw new CliError(`Invalid view name "${name}".`);
+  const viewsDir = path.join(projectRoot, "views");
+  const base = parts[parts.length - 1];
+  const title = titleOf(pascalCase(base));
+
+  if (opts.component) {
+    // `make:view alert -c` -> views/components/alert.megh.html, used as <x-alert>.
+    const dirs = parts[0] === "components" ? parts.slice(1) : parts;
+    const file = path.join(viewsDir, "components", ...dirs) + ".megh.html";
+    write(file, renderStub("views/component.stub", { Tag: dirs.join(".") }), opts.force, "Component", projectRoot);
+    return file;
+  }
+
+  const file = path.join(viewsDir, ...parts) + ".megh.html";
+  let layout = opts.layout;
+  if (layout === undefined) {
+    layout = fs.existsSync(path.join(viewsDir, "layouts", "app.megh.html")) ? "layouts.app" : false;
+  }
+  if (layout) {
+    const layoutFile = path.join(viewsDir, ...layout.split(/[./\\]+/)) + ".megh.html";
+    if (!fs.existsSync(layoutFile)) {
+      log.warn(`  Layout ${layout} not found: create ${path.relative(projectRoot, layoutFile).split(path.sep).join("/")}`);
+    }
+  }
+  const content = layout
+    ? renderStub("views/page.stub", { Layout: layout, Title: title })
+    : renderStub("views/plain.stub", { Title: title });
+  write(file, content, opts.force, "View", projectRoot);
+  if (!/\.useViews\(/.test(appSource(projectRoot))) {
+    log.info("  Turn views on in src/app.ts with app.useViews().");
+  }
+  log.info(`  Render it with Results.View('${parts.join(".")}', { ... }).`);
+  return file;
+}

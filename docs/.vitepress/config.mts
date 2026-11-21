@@ -80,6 +80,7 @@ export default defineConfig({
           { text: 'Scheduler', link: '/advanced/scheduler' },
           { text: 'Caching', link: '/advanced/caching' },
           { text: 'File Uploads', link: '/advanced/file-uploads' },
+          { text: 'Views', link: '/advanced/views' },
           { text: 'Logging', link: '/advanced/logging' },
           { text: 'Health Checks', link: '/advanced/health' },
           { text: 'Testing', link: '/advanced/testing' },

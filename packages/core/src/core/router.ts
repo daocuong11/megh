@@ -80,6 +80,7 @@ import {
 } from "../openapi/query-params";
 import mime from "mime";
 import { HTTPMethods, FastifyInstance } from "fastify";
+import { ViewResult, sendView } from "../view/result";
 import { assertParamTypes } from "../http/params";
 import {
   REDIRECT_META_KEY,
@@ -229,6 +230,7 @@ function toFastifyMethod(method: string): HTTPMethods | HTTPMethods[] {
  * `httpCode` comes from `@HttpCode` and loses to the result's own status.
  */
 function sendResult(res: any, result: any, httpCode?: number) {
+  if (result instanceof ViewResult) return sendView(res, result);
   if (result instanceof HttpResult) {
     res.code(result.statusCode);
     for (const [name, value] of Object.entries(result.headers)) {

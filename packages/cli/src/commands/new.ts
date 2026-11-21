@@ -35,6 +35,8 @@ const DATABASE_SETUP: Record<DatabaseKind, { drivers: string[]; url: string }> =
 export type NewOptions = {
   cwd?: string;
   minimal?: boolean;
+  /** MVC app: server-rendered views in views/ (app.useViews()) and HTML form support. */
+  mvc?: boolean;
   force?: boolean;
   /** Skip prompts and use defaults for anything not given. */
   yes?: boolean;
@@ -105,6 +107,9 @@ async function prompt(opts: NewOptions): Promise<Answers> {
   }
   if (opts.database && !(DATABASES as readonly string[]).includes(opts.database)) {
     throw new CliError(`Unknown database "${opts.database}". Choose from: ${DATABASES.join(", ")}.`);
+  }
+  if (opts.mvc && opts.minimal) {
+    throw new CliError("--mvc adds controllers and views, which need a full project. Leave out --minimal.");
   }
   if (opts.database && opts.minimal) {
     throw new CliError("--database sets up MeghORM, which needs a full project. Leave out --minimal.");
@@ -227,9 +232,15 @@ function sortKeys(obj: Record<string, string>) {
   return Object.fromEntries(Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)));
 }
 
-function appSource(features: Feature[]) {
+function appSource(features: Feature[], mvc = false) {
   const imports: string[] = [];
   const setup: string[] = [];
+  if (mvc) {
+    setup.push(
+      `// Renders views/**/*.megh.html for Results.View('pages.home', data).\napp.useViews();\n` +
+        `// Lets HTML forms send PUT, PATCH and DELETE with @method('PUT').\napp.useMethodOverride();`,
+    );
+  }
   if (features.includes("openapi")) {
     imports.push(`import { OpenApiConfig } from './config/openapi.config';`);
   }
@@ -285,6 +296,7 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
   const root = path.resolve(cwd, name);
   const appName = path.basename(root);
   const minimal = !!opts.minimal;
+  const mvc = !!opts.mvc;
 
   if (fs.existsSync(root)) {
     if (!fs.statSync(root).isDirectory()) throw new CliError(`${root} exists and is not a directory.`);
@@ -297,7 +309,7 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
   const orm = features.includes("orm") && database ? DATABASE_SETUP[database] : undefined;
 
   console.log();
-  console.log(`  ${c.dim("Creating project:")} ${c.bold(appName)}${minimal ? c.dim(" (minimal)") : ""}`);
+  console.log(`  ${c.dim("Creating project:")} ${c.bold(appName)}${minimal ? c.dim(" (minimal)") : mvc ? c.dim(" (mvc)") : ""}`);
 
   const rel = (f: string) => path.relative(cwd, f) || ".";
   const files: Array<[string, string]> = [];
@@ -307,8 +319,18 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
     add("src/app.ts", renderStub("project/app-minimal.stub"));
   } else {
     add("src/services/home.service.ts", renderStub("project/home.service.stub"));
-    add("src/controllers/home.controller.ts", renderStub("project/home.controller.stub"));
-    add("src/controllers/home.controller.spec.ts", renderStub("project/home.controller.spec.stub"));
+    if (mvc) {
+      add("src/controllers/home.controller.ts", renderStub("project/home.controller.mvc.stub"));
+      add("src/controllers/home.controller.spec.ts", renderStub("project/home.controller.mvc.spec.stub"));
+      add(
+        "views/layouts/app.megh.html",
+        renderStub("project/layout.view.stub", { AppTitle: titleCase(appName) || appName }),
+      );
+      add("views/pages/home.megh.html", renderStub("project/home.view.stub"));
+    } else {
+      add("src/controllers/home.controller.ts", renderStub("project/home.controller.stub"));
+      add("src/controllers/home.controller.spec.ts", renderStub("project/home.controller.spec.stub"));
+    }
     if (features.includes("openapi")) {
       add(
         "src/config/openapi.config.ts",
@@ -318,7 +340,7 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
         }),
       );
     }
-    add("src/app.ts", appSource(features));
+    add("src/app.ts", appSource(features, mvc));
     add("vitest.config.mts", renderStub("project/vitest.config.stub"));
     add("vitest.e2e.config.mts", renderStub("project/vitest-e2e.config.stub"));
   }
@@ -348,6 +370,9 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
       Tree: minimal
         ? ""
         : "├── controllers/   # Route controllers\n├── services/      # Business logic\n├── config/        # App configuration\n",
+      Views: mvc
+        ? "views/\n├── layouts/       # Page layouts (@extends)\n└── pages/         # Pages (Results.View('pages.home'))\n\n"
+        : "",
     }),
   );
 
@@ -390,6 +415,10 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
     console.log(c.cyan("    npx megh migrate --seed"));
   }
   console.log(c.cyan(`    ${devCommand(pm)}`));
+  if (mvc) {
+    console.log(`\n  ${c.dim("Home page:")} http://localhost:4000/`);
+    console.log(`  ${c.dim("Add a page:")} npx megh make:view pages.about`);
+  }
   if (features.includes("openapi")) {
     console.log(`\n  ${c.dim("API docs:")} http://localhost:4000/docs`);
   }

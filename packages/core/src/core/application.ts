@@ -36,6 +36,7 @@ import {
   MeghMiddleware,
   type UseAuthorizationOptions,
 } from "../http/middleware";
+import { installMethodOverride } from "../http/method-override";
 import { MeghScheduler } from "../scheduler";
 import { isScheduledTask } from "../scheduler/schedule-registry";
 import { isApiController } from "../common/container";
@@ -69,6 +70,7 @@ import {
 } from "../security/rate-limit";
 import { registerPlugins } from "../plugins/registry";
 import { internalLogger } from "../observability/internal-logger";
+import { ViewEngine, setViewEngine, type ViewEngineOptions } from "../view";
 import {
   isTypeScriptRuntime,
   resolveSourceDir,
@@ -129,10 +131,12 @@ export class MeghApplication implements IMeghApplication {
   private closing: Promise<void> | null = null;
   private signalHandler: ((signal: NodeJS.Signals) => void) | null = null;
   private pluginNames: string[] = [];
+  private viewEngine: ViewEngine | undefined;
   private usesCache = false;
   private usesMail = false;
   private usesSecurityHeaders = false;
   private usesCompression = false;
+  private usesMethodOverride = false;
   private envSchemas: Constructor<object>[] = [];
   private rateLimitOptions: RateLimitOptions | undefined;
   /** The rate limit store Megh created, closed on shutdown. */
@@ -595,6 +599,28 @@ export class MeghApplication implements IMeghApplication {
   }
 
   /**
+   * Configure the view engine used by `Results.View()` / `view()`.
+   *
+   *   app.useViews({ root: "views" });       // views/pages/home.megh.html
+   *   app.useViews(engine);                  // an engine you built yourself
+   *
+   * Templates are cached unless `NODE_ENV` is `"development"`, where a file
+   * is recompiled when it changes.
+   */
+  useViews(options: ViewEngineOptions | ViewEngine = {}) {
+    this.viewEngine =
+      options instanceof ViewEngine ? options : new ViewEngine(options);
+    setViewEngine(this.viewEngine);
+    return this;
+  }
+
+  /** The engine set by `useViews()`, for `share()` and `directive()`. */
+  getViews(): ViewEngine {
+    if (!this.viewEngine) this.useViews();
+    return this.viewEngine!;
+  }
+
+  /**
    * Compress responses (gzip, deflate, brotli) for clients that accept it,
    * with `@fastify/compress`. Options are passed to it; by default bodies
    * under 1024 bytes are sent as they are.
@@ -609,6 +635,30 @@ export class MeghApplication implements IMeghApplication {
     }
     this.usesCompression = true;
     this.app.register(requireCompress(), { global: true, ...options });
+    return this;
+  }
+
+  /**
+   * Let HTML forms send PUT, PATCH and DELETE. The form POSTs with a hidden
+   * `_method` field, which `@method('PUT')` renders in a view, and the
+   * request goes to the route for that method:
+   *
+   *   <form method="post" action="/todos/1">
+   *     @method('DELETE')
+   *     <button>Delete</button>
+   *   </form>
+   *
+   * Only urlencoded form POSTs are rerouted. Also parses
+   * `application/x-www-form-urlencoded` bodies for `@Body()`, unless a parser
+   * for that type is already registered.
+   */
+  useMethodOverride() {
+    this.assertNotStarted("useMethodOverride");
+    if (this.usesMethodOverride) {
+      throw new SystemUseError("[Megh] useMethodOverride() is already on.");
+    }
+    this.usesMethodOverride = true;
+    installMethodOverride(this.app);
     return this;
   }
 
@@ -665,6 +715,8 @@ export class MeghApplication implements IMeghApplication {
     if (options.authorization) this.useAuthorization(options.authorization);
     if (options.multipart) this.useMultipart(options.multipart);
     if (options.staticFiles) this.useStaticFiles(options.staticFiles);
+    if (options.views) this.useViews(options.views);
+    if (options.methodOverride) this.useMethodOverride();
     if (options.compression)
       this.useCompression(
         options.compression === true ? {} : options.compression,

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Megh Template",
+  "scopeName": "text.html.megh",
+  "comment": "HTML with Megh syntax on top. The Megh rules live in megh.injection.tmLanguage.json, injected into every HTML scope of this language, so {{ }} and @directives also highlight inside attribute values and <script>/<style>.",
+  "patterns": [
+    { "include": "text.html.derivative" }
+  ]
+}

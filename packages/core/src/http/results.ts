@@ -5,6 +5,7 @@
  * @url https://github.com/xtareq
  */
 import type { Readable } from "stream";
+import { ViewResult } from "../view/result";
 
 /**
  * Non-enumerable marker the router reads to pick the response status code for
@@ -121,6 +122,7 @@ export class RedirectResult extends HttpResult<undefined> {
  *   return Results.NotFound("nope");  // 404 { code, status, message }
  *   return Results.Redirect("/login");  // 302 Location: /login
  *   return Results.OkStream(stream, { contentType: "text/csv" });
+ *   return Results.View("pages.home", { user });  // text/html
  */
 export class Results {
   static Ok<T>(data: T): Ok<T> {
@@ -137,6 +139,14 @@ export class Results {
   }
   static NotFound<T>(message: T): NotFound<T> {
     return new NotFound<T>(message);
+  }
+  /** Render a view (see `app.useViews()`) and send it as `text/html`. */
+  static View(
+    name: string,
+    data?: Record<string, unknown>,
+    statusCode?: number,
+  ): ViewResult {
+    return new ViewResult(name, data, statusCode);
   }
   /** Redirect to `url`: 302 by default, or `statusCode` (301, 303, 307, 308). */
   static Redirect(url: string, statusCode = 302): RedirectResult {

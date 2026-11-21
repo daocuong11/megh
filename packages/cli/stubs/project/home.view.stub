@@ -1,0 +1,8 @@
+@extends('layouts.app')
+
+@section('title', 'Home')
+
+@section('content')
+  <h1>{{ message }}</h1>
+  <p>Edit <code>views/pages/home.megh.html</code> and reload.</p>
+@endsection

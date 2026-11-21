@@ -11,6 +11,7 @@ import {
   makeConfig,
   makeController,
   makeDto,
+  makeView,
   makeEvent,
   makeListener,
   makeMail,
@@ -127,6 +128,7 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
   sub("new", "Create a new Megh application")
     .argument("<name>", "Project directory (created if missing); `.` for the current directory")
     .option("-m, --minimal", "Minimal app: a single functional route, no controllers, services or tests")
+    .option("--mvc", "MVC app: server-rendered .megh.html views in views/, with HTML form support")
     .option("-f, --force", "Scaffold into a non-empty directory, overwriting generated files")
     .option("-y, --yes", "Skip prompts and use defaults (npm, openapi)")
     .option("--pm <manager>", `Package manager: ${PACKAGE_MANAGERS.join(", ")}`)
@@ -434,6 +436,16 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .action((name: string, o) => {
       makeTask(name, { cwd: cwd(), ...o });
+    });
+
+  make("make:view", ["m:v"], "Create a view in views/<name>.megh.html (pages.about or pages/about)", false)
+    .option("-l, --layout <layout>", "Layout the page extends, e.g. layouts.admin (default: layouts.app when it exists)")
+    .option("--no-layout", "Write a standalone HTML page that extends no layout")
+    .option("-c, --component", "Write an <x-name> component in views/components/ instead")
+    .action(async (name: string, o) => {
+      // With --no-layout defined, commander sets layout to true when neither flag is given.
+      const layout = o.layout === true ? undefined : (o.layout as string | false);
+      await review(o, () => makeView(name, { cwd: cwd(), force: o.force, layout, component: o.component }));
     });
 
   make("make:dto", ["m:dto"], "Create a class-validator DTO in src/dtos/<name>.dto.ts")

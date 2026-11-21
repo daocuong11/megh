@@ -19,6 +19,7 @@ import {
 } from "fastify";
 import type { RedisOptions } from "ioredis";
 import type { PluginOptions } from "../plugins/registry";
+import type { ViewEngine, ViewEngineOptions } from "../view";
 import type { RequestIdOptions } from "../observability/request-context";
 import type { HealthCheck, HealthOptions } from "../observability/health";
 import type { VersioningOptions } from "../http/versioning";
@@ -59,6 +60,8 @@ export type GlobalOptions = {
   authorization?: any;
   multipart?: any;
   staticFiles?: any;
+  /** View engine options, or an engine, for `useViews()`. */
+  views?: ViewEngineOptions | ViewEngine;
   /** `true` or options for `useSecurityHeaders()`. */
   securityHeaders?: boolean | SecurityHeadersOptions;
   /** `true` or options for `useRateLimit()`. */
@@ -67,6 +70,8 @@ export type GlobalOptions = {
   scheduler?: Constructor[] | SchedulerScanOptions;
   /** `true` or options for `useCompression()`. */
   compression?: boolean | CompressionOptions;
+  /** `true` to call `useMethodOverride()`. */
+  methodOverride?: boolean;
 };
 
 /**
@@ -174,8 +179,12 @@ export interface IMeghApplication {
   addHealthCheck: (name: string, check: HealthCheck) => this;
   useControllers: (controllers: Constructor[] | AutoControllerOptions) => this;
   useStaticFiles: (options: any) => this;
+  /** Configure the view engine used by `Results.View()`. */
+  useViews: (options?: ViewEngineOptions | ViewEngine) => this;
   /** Compress responses with `@fastify/compress`. */
   useCompression: (options?: CompressionOptions) => this;
+  /** Route form POSTs with `_method=PUT|PATCH|DELETE` as that method. */
+  useMethodOverride: () => this;
   /** Put a prefix such as `/api` in front of every controller and inline route. */
   setGlobalPrefix: (
     prefix: string,

@@ -1,2 +1,5 @@
 # Shell scripts must keep LF endings to run in bash
 *.sh text eol=lf
+
+# View templates must keep LF endings (tests compare rendered output exactly)
+*.megh.html text eol=lf

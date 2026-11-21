@@ -19,6 +19,9 @@ export * from "./http";
 // ─── Validation (class-validator / class-transformer compatible) ─────────────
 export * from "./validator";
 
+// ─── Views ───────────────────────────────────────────────────────────────────
+export * from "./view";
+
 // ─── OpenAPI ─────────────────────────────────────────────────────────────────
 export * from "./openapi";
 

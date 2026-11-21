@@ -1,3 +1,5 @@
 node_modules
 dist
 build
+# Blade-style view templates; Prettier's HTML parser rejects their syntax
+*.megh.html
