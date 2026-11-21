@@ -84,6 +84,8 @@ export {
   ContainerError,
   Token,
   Injectable,
+  Inject,
+  Optional,
   createInjectDecorator,
   inject,
 } from "./di";

@@ -72,6 +72,8 @@ type InjectHandler = {
   propertyName?: string | symbol;
   index?: number;
   factory: () => unknown;
+  /** Set by `@Optional()`: no factory, just "undefined when unresolvable". */
+  optional?: true;
 };
 
 type Store = {
@@ -180,21 +182,46 @@ function resolveParams(
   return Array.from({ length: count }, (_, index) => {
     if (overrides && index < overrides.length) return overrides[index];
     const paramType = paramTypes[index];
-    const handler = s.handlers.find(
+    const handlers = s.handlers.filter(
       (h) => h.target === owner && h.index === index,
     );
+    const handler = handlers.find((h) => !h.optional);
     if (handler) return handler.factory();
-    // Interfaces, unions and primitives are emitted as Object/String/...;
-    // there's nothing to resolve them by, so they're left undefined.
+    const optional = handlers.length > 0;
     if (
       typeof paramType === "function" &&
       paramType.name &&
       !PRIMITIVE_PARAM_TYPES.has(paramType.name.toLowerCase())
     ) {
+      if (optional && !s.entries.has(paramType)) return undefined;
       return resolve(s, paramType);
     }
-    return undefined;
+    if (optional) return undefined;
+    // Interfaces, unions and primitives are emitted as Object/String/...;
+    // there's nothing to resolve them by. Injecting undefined would only
+    // fail later, far from the cause.
+    throw unresolvableParam(s, type, index, paramType);
   });
+}
+
+function unresolvableParam(
+  s: Store,
+  type: Function,
+  index: number,
+  paramType: unknown,
+): ContainerError {
+  const emitted =
+    typeof paramType === "function" && paramType.name
+      ? `an interface, union or primitive (emitted as ${paramType.name})`
+      : "unknown (no type was emitted)";
+  const circular =
+    paramType === Object
+      ? " If it is a class, a circular import can also cause this: TypeScript emits Object when the class isn't loaded yet."
+      : "";
+  return new ContainerError(
+    `${pathPrefix(s)}Cannot resolve parameter ${index} of ${describe(type)}: its type is ${emitted}. ` +
+      `Use @Inject(TOKEN) on the parameter or inject(TOKEN) in a field, type it as a class, or mark it @Optional().${circular}`,
+  );
 }
 
 function applyPropertyHandlers(s: Store, type: Function, instance: unknown) {
@@ -333,6 +360,42 @@ export function Injectable(): ClassDecorator {
     const entries = store().entries;
     if (!entries.has(target))
       entries.set(target, { type: target, value: EMPTY });
+  };
+}
+
+/**
+ * Inject a token, string or class into a constructor parameter or property,
+ * for types the container can't see (interfaces, unions, primitives):
+ *
+ *   const PAYMENTS = new Token<PaymentGateway>("payments");
+ *
+ *   @AppService
+ *   class OrderService {
+ *     constructor(@Inject(PAYMENTS) private gateway: PaymentGateway) {}
+ *   }
+ *
+ * With `{ optional: true }`, injects `undefined` when nothing is registered.
+ */
+export function Inject<T>(
+  id: ServiceIdentifier<T>,
+  options: InjectOptions = {},
+) {
+  return createInjectDecorator(() => inject(id, options));
+}
+
+/**
+ * Inject `undefined` into this constructor parameter when it can't be
+ * resolved: its type is an interface or primitive, or a class that isn't
+ * registered. Without it, such a parameter fails when the class is built.
+ */
+export function Optional(): ParameterDecorator {
+  return (target, _propertyKey, index) => {
+    store().handlers.push({
+      target,
+      index,
+      factory: () => undefined,
+      optional: true,
+    });
   };
 }
 
