@@ -25,6 +25,7 @@ import {
   REQUEST_HEADER_META_KEY,
   REQUEST_USER_META_KEY,
   AUTHORIZATION_META_KEY,
+  PUBLIC_META_KEY,
   REQUEST_BODY_FILE_KEY,
   REQUEST_BODY_FILES_KEY,
 } from "../common/container";
@@ -32,8 +33,10 @@ import { MethodParamMeta, IRequest, FuncRoute } from "./types";
 import {
   BadRequestException,
   ForbiddenException,
+  UnauthorizedException,
   ValidationErrorException,
 } from "../errors/http-exceptions";
+import type { AuthorizationDefault } from "../http/middleware";
 import { getDeclaredFilters } from "../errors/exception-filter";
 import {
   RATE_LIMIT_CONFIG_KEY,
@@ -309,6 +312,8 @@ export class MeghRouter {
   private authorizeMiddleware?: Constructor<any>;
   private authorizeMiddlewareMap = new Map<string, Constructor<any>>();
   private authenticationHandler?: Constructor<any>;
+  /** Set by `useAuthorization(handler, { default })`. */
+  private authorizationDefault?: AuthorizationDefault;
 
   private compiledValidation: boolean;
   /** True once a mapped route declares its own rate limit. */
@@ -425,6 +430,52 @@ export class MeghRouter {
   /** The class registered with `useAuthentication`, if any. */
   getAuthenticationHandler(): Constructor<any> | undefined {
     return this.authenticationHandler;
+  }
+
+  setAuthorizationDefault(value: AuthorizationDefault | undefined) {
+    this.authorizationDefault = value;
+  }
+
+  /**
+   * What a route needs once the global default is applied.
+   *
+   * - `authorize`: `@Authorized` options to run, or `undefined`.
+   * - `requireUser`: the `"authenticated"` default, which needs a user.
+   *
+   * An explicit `@Authorized` / `.authorized()` always wins; `@Public` /
+   * `.public()` only skips the default.
+   */
+  private _applyAuthorizationDefault(
+    declared: boolean,
+    isPublic: boolean,
+    label: string,
+  ): {
+    authorize?: { name?: string; [key: string]: any };
+    requireUser: boolean;
+  } {
+    if (isPublic && declared) {
+      log.warn(
+        `${label} is marked both public and authorized; @Authorized wins and the route stays protected.`,
+      );
+    }
+    const def = this.authorizationDefault;
+    if (declared || isPublic || def === undefined)
+      return { requireUser: false };
+    if (def === "authenticated") {
+      if (!this.authenticationHandler) {
+        log.warn(
+          `${label} requires an authenticated user (useAuthorization default "authenticated") ` +
+            "but no authentication handler is registered; every request will get 401. " +
+            "Call app.useAuthentication(YourAuthentication).",
+        );
+      }
+      return { requireUser: true };
+    }
+    if (def === true) return { authorize: {}, requireUser: false };
+    return {
+      authorize: typeof def === "string" ? { name: def } : def,
+      requireUser: false,
+    };
   }
 
   setAuthorizeMiddleware(middleware: Constructor<any>) {
@@ -566,11 +617,29 @@ export class MeghRouter {
         ...(methodMeta.openapi ?? {}),
         ...(Reflect.getMetadata("route:openapi", prototype, method) || {}),
       };
-      const authClsMethodMeata = Reflect.getMetadata(
+      let authClsMethodMeata = Reflect.getMetadata(
         AUTHORIZATION_META_KEY,
         ctrl.constructor,
         method,
       ) || { authorize: false, options: undefined };
+      // useAuthorization(handler, { default }) for routes with neither
+      // @Authorized nor @Public.
+      const _isPublic = !!(
+        Reflect.getMetadata(PUBLIC_META_KEY, ctrl.constructor, method) ||
+        Reflect.getMetadata(PUBLIC_META_KEY, ctrl.constructor)
+      );
+      const _authDefault = this._applyAuthorizationDefault(
+        !!(authClsMeata.authorize || authClsMethodMeata.authorize),
+        _isPublic,
+        `${methodMeta.method.toUpperCase()} ${formatUrl(controllerMeta.path + methodMeta.path)}`,
+      );
+      if (_authDefault.authorize) {
+        authClsMethodMeata = {
+          authorize: true,
+          options: _authDefault.authorize,
+        };
+      }
+      const _requireUser = _authDefault.requireUser;
 
       const allMeta = this._processMeta(prototype, method);
 
@@ -654,7 +723,11 @@ export class MeghRouter {
         validates: [...allMeta.body, ...allMeta.query].some(
           (p) => p.validatorClass,
         ),
-        authorized: !!(authClsMeata.authorize || authClsMethodMeata.authorize),
+        authorized: !!(
+          authClsMeata.authorize ||
+          authClsMethodMeata.authorize ||
+          _requireUser
+        ),
       });
 
       // @Query() parameters, documented only (Megh validates them itself).
@@ -769,6 +842,10 @@ export class MeghRouter {
               if (user !== null && user !== undefined) {
                 setRequestUser(reqClone, user);
               }
+            }
+
+            if (_requireUser && (reqClone as any).user == null) {
+              throw new UnauthorizedException("Unauthorized");
             }
 
             if (_authMissing) {
@@ -1026,6 +1103,15 @@ export class MeghRouter {
       },
 
       /**
+       * Leave this route out of the default set with
+       * `useAuthorization(handler, { default })`, like `@Public()`.
+       */
+      public: () => {
+        entry().public = true;
+        return route;
+      },
+
+      /**
        * Require authorization, like `@Authorized()` on a controller route.
        * Pass a name to pick a handler from `useAuthorization({ ... })`.
        */
@@ -1082,8 +1168,15 @@ export class MeghRouter {
       const m = key.slice(0, colonIdx);
       const r = key.slice(colonIdx + 1); // handles paths containing ":"
 
+      const authDefault = this._applyAuthorizationDefault(
+        !!value.authorize,
+        !!value.public,
+        `${m} ${r}`,
+      );
+      const authorize = value.authorize ?? authDefault.authorize;
+      const requireUser = authDefault.requireUser;
       const routeSchema = buildRouteSchema(value.schema || {}, undefined, {
-        authorized: !!value.authorize,
+        authorized: !!authorize || requireUser,
       });
 
       // Resolved once, like controller routes.
@@ -1093,11 +1186,11 @@ export class MeghRouter {
       const authn = this.authenticationHandler
         ? (Container.get(this.authenticationHandler) as any)
         : null;
-      const authzCls = value.authorize
-        ? this._resolveAuthorizer(value.authorize)
+      const authzCls = authorize
+        ? this._resolveAuthorizer(authorize)
         : undefined;
       const authz = authzCls ? (Container.get(authzCls) as any) : null;
-      if (value.authorize && !authz) {
+      if (authorize && !authz) {
         log.warn(
           `${m} ${r} uses .authorized() but no authorization handler is registered; ` +
             "every request will be denied (403). Call app.useAuthorization(YourAuthorization).",
@@ -1128,9 +1221,12 @@ export class MeghRouter {
               setRequestUser(request, user);
             }
           }
-          if (value.authorize) {
+          if (requireUser && (request as any).user == null) {
+            throw new UnauthorizedException("Unauthorized");
+          }
+          if (authorize) {
             if (!authz) throw new ForbiddenException("Forbidden");
-            const allowed = await authz.authorize(request, value.authorize);
+            const allowed = await authz.authorize(request, authorize);
             if (res.sent) return;
             if (allowed === false) throw new ForbiddenException("Forbidden");
           }

@@ -5,7 +5,10 @@
  * @url https://github.com/xtareq
  */
 import { Constructor } from "../common/helpers";
-import { MeghMiddleware } from "../http/middleware";
+import {
+  MeghMiddleware,
+  type UseAuthorizationOptions,
+} from "../http/middleware";
 import { MeghConfig } from "../config/config";
 import type { MeghAuthentication } from "../security/authentication";
 import { OpenApiUiOptions } from "../openapi/openapi";
@@ -153,7 +156,10 @@ export interface IMeghApplication {
   useMiddlewares: (middlewares: Constructor<MeghMiddleware>[]) => this;
   /** Register the global authentication handler that populates `request.user`. */
   useAuthentication: (authentication: Constructor<MeghAuthentication>) => this;
-  useAuthorization: (authorization: Constructor<any>) => this;
+  useAuthorization: (
+    authorization: Constructor<any> | Record<string, Constructor<any>>,
+    options?: UseAuthorizationOptions,
+  ) => this;
   /** Register global exception filters, run in order before the default error response. */
   useExceptionFilters: (
     filters: ExceptionFilterLike | ExceptionFilterLike[],
