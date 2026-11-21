@@ -372,6 +372,11 @@ describe("IPv6 grouping (#135)", () => {
     expect(rateLimitIpKey("fe80::1%eth0")).toBe("fe80:0:0:0:0:0:0:0/64");
   });
 
+  it("is exported from the package root", async () => {
+    const core = await import("../index");
+    expect(core.rateLimitIpKey).toBe(rateLimitIpKey);
+  });
+
   it("supports other prefix lengths", () => {
     expect(rateLimitIpKey("2001:db8:abcd:12ff::1", 56)).toBe(
       "2001:db8:abcd:1200:0:0:0:0/56",
