@@ -32,7 +32,10 @@ import { applyRequestBodyExtensions } from "../openapi/request-body";
 import { applyQueryParamExtensions } from "../openapi/query-params";
 import { swaggerUiBranding } from "../openapi/branding";
 import { OpenApiUiOptions } from "../openapi/openapi";
-import { MeghMiddleware } from "../http/middleware";
+import {
+  MeghMiddleware,
+  type UseAuthorizationOptions,
+} from "../http/middleware";
 import { MeghScheduler } from "../scheduler";
 import { isScheduledTask } from "../scheduler/schedule-registry";
 import { isApiController } from "../common/container";
@@ -460,11 +463,15 @@ export class MeghApplication implements IMeghApplication {
    */
   useAuthorization(
     authorization: Constructor<any> | Record<string, Constructor<any>>,
+    options: UseAuthorizationOptions = {},
   ) {
     if (typeof authorization === "function") {
       this.router.setAuthorizeMiddleware(authorization);
     } else {
       this.router.setAuthorizeMiddlewareMap(authorization);
+    }
+    if (options.default !== undefined) {
+      this.router.setAuthorizationDefault(options.default);
     }
     return this;
   }

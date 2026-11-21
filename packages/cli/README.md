@@ -200,6 +200,11 @@ npx megh route:list --static # scan decorators in the source, no dependencies
 npx megh routes --json
 ```
 
+The `AUTH` column shows how each route is protected: `authorized` (or
+`authorized:<name>`) for `@Authorized`, `public` for `@Public()`, and `default`
+for neither, which is protected only when the app sets
+`useAuthorization(handler, { default })`.
+
 ## Doctor
 
 ```sh

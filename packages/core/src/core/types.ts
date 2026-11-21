@@ -118,6 +118,8 @@ export type FuncRoute = {
   schema: any;
   /** Set by `.authorized()`: the `@Authorized` options for this route. */
   authorize?: { name?: string; [key: string]: unknown };
+  /** Set by `.public()`: skip the `useAuthorization` default. */
+  public?: boolean;
   /** Set by `.rateLimit()`: this route's own limit, or `false` for none. */
   rateLimit?: RouteRateLimitOptions | false;
 };
