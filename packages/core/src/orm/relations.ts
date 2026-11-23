@@ -23,7 +23,36 @@ export const RELATION: unique symbol = Symbol("megh.orm.relation");
 
 type RelatedClass = abstract new () => any;
 
-export type RelationKind = "hasMany" | "hasOne" | "belongsTo" | "belongsToMany";
+export type RelationKind =
+  | "hasMany"
+  | "hasOne"
+  | "belongsTo"
+  | "belongsToMany"
+  | "hasManyThrough"
+  | "hasOneThrough"
+  | "morphMany"
+  | "morphOne"
+  | "morphTo";
+
+/** The intermediate table of a `hasManyThrough` / `hasOneThrough` relation. */
+export interface ThroughDefinition {
+  /** The intermediate model. */
+  model: () => RelatedClass;
+  /** Column on the related table holding the intermediate row's key. */
+  secondKey: string;
+  /** Key on the intermediate table that `secondKey` matches. */
+  secondLocalKey: string;
+}
+
+/** The type column of a polymorphic relation. */
+export interface MorphDefinition {
+  /** Column holding the owner's type, e.g. `commentable_type`. */
+  type: string;
+  /** morphMany/morphOne: this model's type value. */
+  value?: string;
+  /** morphTo: the models the type column may name. */
+  targets?: () => RelatedClass[];
+}
 
 /** The pivot table of a many-to-many relation. */
 export interface PivotDefinition {
@@ -41,8 +70,10 @@ export interface RelationDefinition {
   kind: RelationKind;
   related: () => RelatedClass;
   /**
-   * hasMany/hasOne: column on the related table. belongsTo: column on this
-   * table. belongsToMany: pivot column holding this model's key.
+   * hasMany/hasOne/morphMany/morphOne: column on the related table.
+   * belongsTo/morphTo: column on this table. belongsToMany: pivot column
+   * holding this model's key. hasManyThrough/hasOneThrough: column on the
+   * intermediate table holding this model's key.
    */
   foreignKey: string;
   /**
@@ -52,6 +83,22 @@ export interface RelationDefinition {
   localKey: string;
   /** belongsToMany only. */
   pivot?: PivotDefinition;
+  /** hasManyThrough/hasOneThrough only. */
+  through?: ThroughDefinition;
+  /** morphMany/morphOne/morphTo only. */
+  morph?: MorphDefinition;
+}
+
+/** Options for {@link hasManyThrough} / {@link hasOneThrough}. */
+export interface ThroughOptions {
+  /** Column on the intermediate table holding this model's key. Defaults to `<snake_case this class>_id`. */
+  firstKey?: string;
+  /** Column on the related table holding the intermediate key. Defaults to `<snake_case intermediate class>_id`. */
+  secondKey?: string;
+  /** Key on this table. Defaults to the primary key. */
+  localKey?: string;
+  /** Key on the intermediate table. Defaults to its primary key. */
+  secondLocalKey?: string;
 }
 
 /** Options for {@link belongsToMany}. */
@@ -75,6 +122,10 @@ export interface DeclaredRelation {
   foreignKey?: string;
   localKey?: string;
   pivot?: BelongsToManyOptions & { columns: string[] };
+  through?: { model: () => RelatedClass } & ThroughOptions;
+  /** Polymorphic name, e.g. `commentable`: columns `commentable_id` and `commentable_type`. */
+  morphName?: string;
+  morphTargets?: () => RelatedClass[];
 }
 
 /** One-to-many: `posts = hasMany(() => Post)`. Loads as `Post[]`. */
@@ -126,12 +177,77 @@ export interface BelongsToMany<M, Pivot = {}> {
   ): BelongsToMany<M, Pivot & T>;
 }
 
+/** Distant one-to-many through an intermediate model: `posts = hasManyThrough(() => Post, () => User)`. Loads as `Post[]`. */
+export interface HasManyThrough<M> {
+  readonly [RELATION]: {
+    kind: "many";
+    type: "hasManyThrough";
+    model: M;
+    def: DeclaredRelation;
+  };
+}
+/** Distant one-to-one through an intermediate model. Loads as `M | null`. */
+export interface HasOneThrough<M> {
+  readonly [RELATION]: {
+    kind: "one";
+    type: "hasOneThrough";
+    model: M;
+    def: DeclaredRelation;
+  };
+}
+/** Polymorphic one-to-many: `comments = morphMany(() => Comment, "commentable")`. Loads as `Comment[]`. */
+export interface MorphMany<M> {
+  readonly [RELATION]: {
+    kind: "many";
+    type: "morphMany";
+    model: M;
+    def: DeclaredRelation;
+  };
+}
+/** Polymorphic one-to-one: `image = morphOne(() => Image, "imageable")`. Loads as `Image | null`. */
+export interface MorphOne<M> {
+  readonly [RELATION]: {
+    kind: "one";
+    type: "morphOne";
+    model: M;
+    def: DeclaredRelation;
+  };
+}
+/** Inverse of a polymorphic relation: `commentable = morphTo(() => [Post, Video])`. Loads as `Post | Video | null`. */
+export interface MorphTo<M> {
+  readonly [RELATION]: {
+    kind: "one";
+    type: "morphTo";
+    model: M;
+    def: DeclaredRelation;
+  };
+}
+
 export type AnyRelation =
-  HasMany<any> | HasOne<any> | BelongsTo<any> | BelongsToMany<any, any>;
+  | HasMany<any>
+  | HasOne<any>
+  | BelongsTo<any>
+  | BelongsToMany<any, any>
+  | HasManyThrough<any>
+  | HasOneThrough<any>
+  | MorphMany<any>
+  | MorphOne<any>
+  | MorphTo<any>;
+
+const MANY: ReadonlySet<RelationKind> = new Set([
+  "hasMany",
+  "belongsToMany",
+  "hasManyThrough",
+  "morphMany",
+]);
+
+/** Whether a relation loads a list. */
+export function isManyKind(kind: RelationKind): boolean {
+  return MANY.has(kind);
+}
 
 function marker(def: DeclaredRelation): any {
-  const kind =
-    def.kind === "hasMany" || def.kind === "belongsToMany" ? "many" : "one";
+  const kind = isManyKind(def.kind) ? "many" : "one";
   const out: any = { [RELATION]: { kind, type: def.kind, def } };
   if (def.kind === "belongsToMany") {
     out.withPivot = (...columns: string[]) => {
@@ -199,6 +315,108 @@ export function belongsToMany<C extends RelatedClass>(
     related,
     pivot: { ...options, columns: [] },
   });
+}
+
+/**
+ * A distant one-to-many relation through an intermediate model. A country
+ * has many posts through its users:
+ *
+ * ```ts
+ * class Country extends Model {
+ *   // countries.id → users.country_id, users.id → posts.user_id
+ *   posts = hasManyThrough(() => Post, () => User);
+ * }
+ * ```
+ */
+export function hasManyThrough<C extends RelatedClass>(
+  related: () => C,
+  through: () => RelatedClass,
+  options: ThroughOptions = {},
+): HasManyThrough<InstanceType<C>> {
+  return marker({
+    kind: "hasManyThrough",
+    related,
+    through: { model: through, ...options },
+  });
+}
+
+/** A distant one-to-one relation through an intermediate model. Same keys as {@link hasManyThrough}. */
+export function hasOneThrough<C extends RelatedClass>(
+  related: () => C,
+  through: () => RelatedClass,
+  options: ThroughOptions = {},
+): HasOneThrough<InstanceType<C>> {
+  return marker({
+    kind: "hasOneThrough",
+    related,
+    through: { model: through, ...options },
+  });
+}
+
+/**
+ * Polymorphic one-to-many: the related rows point at their owner with two
+ * columns, `<name>_id` and `<name>_type`. The type is the owner's
+ * `static morphType`, or its table name.
+ *
+ * ```ts
+ * class Post extends Model {
+ *   comments = morphMany(() => Comment, "commentable");
+ * }
+ * ```
+ *
+ * @param localKey Key on this table. Defaults to the primary key.
+ */
+export function morphMany<C extends RelatedClass>(
+  related: () => C,
+  name: string,
+  localKey?: string,
+): MorphMany<InstanceType<C>> {
+  return marker({ kind: "morphMany", related, morphName: name, localKey });
+}
+
+/** Polymorphic one-to-one. Same arguments as {@link morphMany}. */
+export function morphOne<C extends RelatedClass>(
+  related: () => C,
+  name: string,
+  localKey?: string,
+): MorphOne<InstanceType<C>> {
+  return marker({ kind: "morphOne", related, morphName: name, localKey });
+}
+
+/**
+ * The inverse of {@link morphMany} / {@link morphOne}: the owner named by
+ * `<name>_id` and `<name>_type`, one of `targets`.
+ *
+ * ```ts
+ * class Comment extends Model {
+ *   commentable_id: number;
+ *   commentable_type: string;
+ *   commentable = morphTo(() => [Post, Video]);
+ * }
+ * ```
+ *
+ * @param name Defaults to the field name.
+ */
+export function morphTo<const T extends readonly RelatedClass[]>(
+  targets: () => T,
+  name?: string,
+): MorphTo<InstanceType<T[number]>> {
+  return marker({
+    kind: "morphTo",
+    related: () => targets()[0],
+    morphName: name,
+    morphTargets: targets as unknown as () => RelatedClass[],
+  });
+}
+
+/** The value a model's rows are named by in polymorphic `<name>_type` columns. */
+export function morphTypeOf(cls: Function): string {
+  const own = cls as unknown as {
+    morphType?: string;
+    table?: string;
+    name: string;
+  };
+  return own.morphType ?? own.table ?? own.name;
 }
 
 /** A relation definition, as the relation decorators record it. */
@@ -291,12 +509,63 @@ function resolve(
     };
   }
 
+  if (kind === "hasManyThrough" || kind === "hasOneThrough") {
+    const options = declared.through!;
+    const through = () => options.model() as unknown as OwnerClass;
+    return {
+      kind,
+      related: declared.related,
+      foreignKey: options.firstKey ?? `${snakeCase(cls.name)}_id`,
+      localKey: options.localKey ?? ownPk,
+      // The intermediate class may not be defined yet when this runs.
+      get through() {
+        return {
+          model: options.model,
+          secondKey: options.secondKey ?? `${snakeCase(through().name)}_id`,
+          secondLocalKey:
+            options.secondLocalKey ?? through().primaryKey ?? "id",
+        };
+      },
+    };
+  }
+
+  if (kind === "morphTo") {
+    const morphName = declared.morphName ?? name;
+    return {
+      kind,
+      related: declared.related,
+      foreignKey: declared.foreignKey ?? `${morphName}_id`,
+      // Empty: each target's own primary key, see morphOwnerKey().
+      localKey: declared.localKey ?? "",
+      morph: { type: `${morphName}_type`, targets: declared.morphTargets },
+    };
+  }
+
+  if (kind === "morphMany" || kind === "morphOne") {
+    const morphName = declared.morphName!;
+    return {
+      kind,
+      related: declared.related,
+      foreignKey: declared.foreignKey ?? `${morphName}_id`,
+      localKey: declared.localKey ?? ownPk,
+      morph: { type: `${morphName}_type`, value: morphTypeOf(cls) },
+    };
+  }
+
   return {
     kind,
     related: declared.related,
     foreignKey: declared.foreignKey ?? `${snakeCase(cls.name)}_id`,
     localKey: declared.localKey ?? ownPk,
   };
+}
+
+/** morphTo: the key on `target` that `<name>_id` matches. */
+export function morphOwnerKey(
+  def: RelationDefinition,
+  target: (new () => any) & { primaryKey?: string },
+): string {
+  return def.localKey || (target.primaryKey ?? "id");
 }
 
 export function getRelation(
