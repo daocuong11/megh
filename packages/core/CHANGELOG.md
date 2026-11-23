@@ -3,6 +3,26 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.7.1](https://github.com/meghjs/megh/compare/v0.7.0...v0.7.1) (2026-11-23)
+
+### Features
+
+- **core:** constrained eager loading and a fuller model query builder ([ad58a16](https://github.com/meghjs/megh/commit/ad58a16880e6638b6a730b296d4b057233429d3c))
+- **core:** declare through and polymorphic relations ([eca3980](https://github.com/meghjs/megh/commit/eca3980bb8df4fe0b37ca6a7e7ca389bdc21d768))
+- **core:** hidden columns, model events and upserts on Model ([c4fbea5](https://github.com/meghjs/megh/commit/c4fbea50fa5429a726206c3dfde6c15a792b6237))
+- **core:** make class-validator and class-transformer optional ([6f1ba3f](https://github.com/meghjs/megh/commit/6f1ba3f09443beeec2e4405a806d90d1d6027791))
+- **core:** upsert, CTEs, unions, locks and streaming on DB.table() ([ed8c4d5](https://github.com/meghjs/megh/commit/ed8c4d590c71dd188e3a429ac3ca96b51c6d7b66))
+
+### BREAKING CHANGES
+
+- **core:** IsArrayNotEmpty is now a Megh decorator, so a
+  class-validator DTO that uses it fails at startup as a mixed DTO. Use
+  class-validator's ArrayNotEmpty there.
+- **core:** Model now has refresh, fresh, touch, replicate,
+  increment, decrement, makeVisible and makeHidden methods, so a model
+  declaring a member with one of those names must rename it.
+  Model.create() goes through save() and fires the save events.
+
 # [0.7.0](https://github.com/meghjs/megh/compare/v0.6.5...v0.7.0) (2026-11-21)
 
 ### Bug Fixes
