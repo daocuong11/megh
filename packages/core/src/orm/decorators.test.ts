@@ -41,7 +41,7 @@ class Account extends Model {
 
   /** Not a column: no decorator, and private so types leave it out too. */
   private scratch = "not saved";
-  touch() {
+  scribble() {
     this.scratch = "changed";
   }
 
@@ -175,7 +175,7 @@ describe("model decorators", () => {
 
   it("save() ignores fields that aren't columns", async () => {
     const account = new Account().fill({ email: "bob@x.io", active: false });
-    account.touch();
+    account.scribble();
     await account.save();
     account.name = "Bob";
     await account.save();

@@ -17,7 +17,12 @@ export function modelSchema(cls: SchemaClass): SchemaObject | undefined {
   if (!columns || columns.size === 0) return undefined;
   const properties: Record<string, SchemaObject> = {};
   const required: string[] = [];
+  // `static hidden` columns never appear in responses.
+  const hidden = new Set<string>(
+    (cls as { hidden?: readonly string[] }).hidden ?? [],
+  );
   for (const column of columns.values()) {
+    if (hidden.has(column.property)) continue;
     const design = (Reflect as any).getMetadata?.(
       "design:type",
       cls.prototype,

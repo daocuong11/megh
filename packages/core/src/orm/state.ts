@@ -53,6 +53,17 @@ export function hydrate<M>(
   return instance;
 }
 
+/**
+ * A new, unsaved instance with no own fields: no relation markers, and no
+ * defaults from field initializers, so only the values assigned to it are
+ * written.
+ */
+export function emptyInstance<M>(cls: ModelClass<M>): M {
+  const instance: any = new cls();
+  for (const key of Object.keys(instance)) delete instance[key];
+  return instance;
+}
+
 function snapshot(values: Record<string, unknown>): Record<string, unknown> {
   try {
     return structuredClone(values);

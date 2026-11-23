@@ -1,11 +1,17 @@
 export { Model } from "./model";
+export type { ModelEvent } from "./events";
 export { modelSchema } from "./openapi";
 export {
   ModelQuery,
+  type Aggregated,
   type ComparisonOperator,
   type Counted,
+  type Existence,
+  type JoinOperator,
+  type SubQuery,
   type CursorPageRequest,
   type CursorPaginated,
+  type EagerConstraints,
   type ModelAt,
   type RelationConstraint,
   type Scope,
@@ -17,7 +23,14 @@ export {
   hasOne,
   belongsTo,
   belongsToMany,
+  hasManyThrough,
+  hasOneThrough,
+  morphMany,
+  morphOne,
+  morphTo,
+  morphTypeOf,
   type BelongsToManyOptions,
+  type ThroughOptions,
 } from "./relations";
 // HasMany, HasOne, BelongsTo and BelongsToMany are both the relation
 // decorators and the field types: `@HasMany(() => Post) posts: HasMany<Post>`.
@@ -34,6 +47,11 @@ export {
   HasOne,
   BelongsTo,
   BelongsToMany,
+  HasManyThrough,
+  HasOneThrough,
+  MorphMany,
+  MorphOne,
+  MorphTo,
   getModelMetadata,
   type ColumnType,
   type ColumnOptions,
@@ -42,6 +60,7 @@ export {
   type HasOptions,
   type BelongsToOptions,
   type BelongsToManyDecoratorOptions,
+  type MorphOptions,
 } from "./decorators";
 export { ORM_CONNECTION } from "./connection";
 export { PivotRelation, type RelatedRef } from "./pivot";
@@ -51,6 +70,7 @@ export type {
   ColumnKeys,
   RelationKeys,
   RelationPaths,
+  EagerShape,
   BelongsToManyKeys,
   HasRelationKeys,
   PivotOf,
