@@ -57,7 +57,6 @@ export class PivotRelation<R, Pivot = {}> {
       this.def.related() as unknown as ModelClass,
       [holder],
       "related",
-      [],
     );
     return holder.related;
   }
