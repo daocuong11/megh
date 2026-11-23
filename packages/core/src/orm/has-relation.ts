@@ -11,8 +11,9 @@ import type { RelationDefinition } from "./relations";
 import type { ModelClass, Row, UpdateInput } from "./types";
 
 /**
- * The related rows of one model's `hasMany` / `hasOne` relation, to query or
- * create them with the foreign key filled in:
+ * The related rows of one model's `hasMany` / `hasOne` (or `morphMany` /
+ * `morphOne`) relation, to query or create them with the foreign key (and
+ * type) filled in:
  *
  * ```ts
  * const post = await user.related("posts").create({ title: "Hello" });
@@ -45,17 +46,33 @@ export class HasRelation<R, Kind extends "many" | "one" = "many"> {
     return key;
   }
 
-  /** A query on the related rows. */
+  /** Columns pointing a related row at the parent: the foreign key, and the type of a polymorphic relation. */
+  private owner(): Record<string, unknown> {
+    const out: Record<string, unknown> = {
+      [this.foreignProperty]: this.parentKey(),
+    };
+    const morph = this.def.morph;
+    if (morph?.value !== undefined) {
+      out[propertyName(this.relatedClass, morph.type)] = morph.value;
+    }
+    return out;
+  }
+
+  /**
+   * A query on the related rows. The link to the parent is kept apart from
+   * your conditions, so `orWhere()` can't reach other parents' rows.
+   */
   query(): ModelQuery<R> {
-    return (new ModelQuery<R>(this.relatedClass) as ModelQuery<any>).where(
-      this.def.foreignKey,
-      this.parentKey(),
-    ) as ModelQuery<R>;
+    const query = new ModelQuery<R>(this.relatedClass);
+    for (const [column, value] of Object.entries(this.owner())) {
+      query.guard(column, value);
+    }
+    return query;
   }
 
   /** The related rows (`hasMany`) or row (`hasOne`, `null` when missing). */
   async get(): Promise<Kind extends "many" ? Row<R>[] : Row<R> | null> {
-    if (this.def.kind === "hasOne") {
+    if (this.def.kind === "hasOne" || this.def.kind === "morphOne") {
       return ((await this.query().first()) ?? null) as any;
     }
     return (await this.query().get()) as any;
@@ -63,10 +80,7 @@ export class HasRelation<R, Kind extends "many" | "one" = "many"> {
 
   /** Insert a related row with the foreign key set to this model's key. */
   async create(values: UpdateInput<R>): Promise<Row<R>> {
-    return (this.relatedClass as any).create({
-      ...values,
-      [this.foreignProperty]: this.parentKey(),
-    });
+    return (this.relatedClass as any).create({ ...values, ...this.owner() });
   }
 
   /** Insert several related rows in one transaction. */
@@ -80,7 +94,7 @@ export class HasRelation<R, Kind extends "many" | "one" = "many"> {
 
   /** Point `model` at this parent (set its foreign key) and save it. */
   async save<T extends R>(model: T): Promise<T> {
-    (model as any)[this.foreignProperty] = this.parentKey();
+    Object.assign(model as object, this.owner());
     return (model as any).save();
   }
 }

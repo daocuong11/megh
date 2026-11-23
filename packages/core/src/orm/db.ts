@@ -19,10 +19,10 @@
  */
 /* eslint-disable @typescript-eslint/no-explicit-any -- Kysely's builders
    change type with every call; the chains here are built up in loops. */
-import type { Kysely, Transaction } from "kysely";
+import type { InflightQueryAbortStrategy, Kysely, Transaction } from "kysely";
 import { NotFoundException, normalizePageRequest, paginated } from "./core";
 import type { PageRequest, Paginated } from "./core";
-import { bindable, isSqlite } from "./casts";
+import { bindable, isSqlite, usesAdapter } from "./casts";
 import { getConnection, runInTransaction } from "./connection";
 import { kysely } from "./engine";
 import { applyPaging } from "./paging";
@@ -70,8 +70,21 @@ function bind(value: unknown, sqlite: boolean): unknown {
     : bindable(value, sqlite);
 }
 
+/** A query usable as a subquery: `DB.table()` and model queries. */
+interface Subquery {
+  toKysely(): any;
+}
+
+function isSubquery(value: unknown): value is Subquery {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as any).toKysely === "function"
+  );
+}
+
 /** SQL text with `?` placeholders, and the values for them. */
-function rawSql(text: string, bindings: readonly unknown[] = []) {
+export function rawSql(text: string, bindings: readonly unknown[] = []) {
   const parts = text.split("?");
   if (parts.length - 1 !== bindings.length) {
     throw new Error(
@@ -140,16 +153,32 @@ export class WhereClauses<Self> {
     return this.comparison(true, args);
   }
 
-  whereIn(column: string, values: readonly unknown[]): Self {
+  /** Rows whose `column` is in `values`: a list, or a subquery selecting one column. */
+  whereIn(column: string, values: readonly unknown[] | Subquery): Self {
     return this.push(false, (eb, sqlite) =>
       inList(eb, column, values, false, sqlite),
     );
   }
 
-  whereNotIn(column: string, values: readonly unknown[]): Self {
+  whereNotIn(column: string, values: readonly unknown[] | Subquery): Self {
     return this.push(false, (eb, sqlite) =>
       inList(eb, column, values, true, sqlite),
     );
+  }
+
+  orWhereIn(column: string, values: readonly unknown[] | Subquery): Self {
+    return this.push(true, (eb, sqlite) =>
+      inList(eb, column, values, false, sqlite),
+    );
+  }
+
+  /** Rows for which `query` returns a row: `whereExists(DB.table("bans").whereColumn("bans.user_id", "=", "users.id"))`. */
+  whereExists(query: Subquery): Self {
+    return this.push(false, (eb) => eb.exists(query.toKysely()));
+  }
+
+  whereNotExists(query: Subquery): Self {
+    return this.push(false, (eb) => eb.not(eb.exists(query.toKysely())));
   }
 
   whereNull(column: string): Self {
@@ -245,16 +274,29 @@ function compare(
 function inList(
   eb: any,
   column: string,
-  values: readonly unknown[],
+  values: readonly unknown[] | Subquery,
   not: boolean,
   sqlite: boolean,
 ) {
+  if (isSubquery(values)) {
+    return eb(column, not ? "not in" : "in", values.toKysely());
+  }
   // `in ()` is invalid SQL: nothing is in an empty list, everything is outside it.
   if (values.length === 0) return kysely().sql.raw(not ? "1 = 1" : "1 = 0");
   return eb(column, not ? "not in" : "in", bind([...values], sqlite));
 }
 
-type Order = { column: string; direction: "asc" | "desc" } | { raw: string };
+type Order =
+  | { column: string; direction: "asc" | "desc"; nulls?: "first" | "last" }
+  | { raw: string };
+
+/** A common table expression: `with <name> as (<query>)`. */
+interface Cte {
+  name: string;
+  query: Subquery;
+  /** Recursive: `<query> union all <recursive>`. */
+  recursive?: Subquery;
+}
 type Join = {
   kind: "inner" | "left" | "right";
   table: string;
@@ -276,6 +318,17 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
   private havings = new WhereGroup();
   private limitValue?: number;
   private offsetValue?: number;
+  private distinctColumns: string[] = [];
+  private unions: { all: boolean; query: Subquery }[] = [];
+  private ctes: Cte[] = [];
+  private lock?: {
+    mode: "update" | "share";
+    modifier?: "skipLocked" | "noWait";
+  };
+  private execOptions: {
+    signal?: AbortSignal;
+    inflightQueryAbortStrategy?: InflightQueryAbortStrategy;
+  } = {};
 
   constructor(private readonly tableName: string) {
     super();
@@ -297,6 +350,100 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
 
   distinct(): this {
     this.isDistinct = true;
+    return this;
+  }
+
+  /** PostgreSQL only: one row per distinct value of `columns`, the first in the query's order. */
+  distinctOn(...columns: string[]): this {
+    this.distinctColumns.push(...columns);
+    return this;
+  }
+
+  /**
+   * Add `with <name> as (<query>)`, to select from by name:
+   * `DB.table("big").withExpression("big", DB.table("orders").where("total", ">", 100))`.
+   */
+  withExpression(name: string, query: Subquery): this {
+    this.ctes.push({ name, query });
+    return this;
+  }
+
+  /**
+   * A recursive common table expression: `anchor union all recursive`,
+   * where `recursive` joins `name` itself. Walks trees and graphs:
+   *
+   * ```ts
+   * const subtree = await DB.table("tree")
+   *   .withRecursiveExpression(
+   *     "tree",
+   *     DB.table("categories").where("id", rootId),
+   *     DB.table("categories").select("categories.*").join("tree", "tree.id", "categories.parent_id"),
+   *   )
+   *   .get();
+   * ```
+   */
+  withRecursiveExpression(
+    name: string,
+    anchor: Subquery,
+    recursive: Subquery,
+  ): this {
+    this.ctes.push({ name, query: anchor, recursive });
+    return this;
+  }
+
+  /** Add the rows of another query: `union` drops duplicates. */
+  union(query: Subquery): this {
+    this.unions.push({ all: false, query });
+    return this;
+  }
+
+  /** Like {@link union}, keeping duplicates. */
+  unionAll(query: Subquery): this {
+    this.unions.push({ all: true, query });
+    return this;
+  }
+
+  /** `FOR UPDATE`: lock the selected rows until the transaction ends. A no-op on SQLite; not supported on SQL Server. */
+  lockForUpdate(): this {
+    this.lock = { ...this.lock, mode: "update" };
+    return this;
+  }
+
+  /** `FOR SHARE`: others can read the selected rows but not change them. */
+  sharedLock(): this {
+    this.lock = { ...this.lock, mode: "share" };
+    return this;
+  }
+
+  /** With a lock: skip rows another transaction has locked. */
+  skipLocked(): this {
+    this.lock = { mode: this.lock?.mode ?? "update", modifier: "skipLocked" };
+    return this;
+  }
+
+  /** With a lock: fail at once instead of waiting for locked rows. */
+  noWait(): this {
+    this.lock = { mode: this.lock?.mode ?? "update", modifier: "noWait" };
+    return this;
+  }
+
+  /** Stop the query when `signal` aborts. See `ModelQuery.abortSignal()`. */
+  abortSignal(
+    signal: AbortSignal | undefined,
+    strategy?: InflightQueryAbortStrategy,
+  ): this {
+    this.execOptions = { signal, inflightQueryAbortStrategy: strategy };
+    return this;
+  }
+
+  /** Apply `then` when `value` is truthy, else `otherwise`. */
+  when<V>(
+    value: V,
+    then: (query: this, value: NonNullable<V>) => unknown,
+    otherwise?: (query: this) => unknown,
+  ): this {
+    if (value) then(this, value as NonNullable<V>);
+    else otherwise?.(this);
     return this;
   }
 
@@ -340,8 +487,13 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
     return this;
   }
 
-  orderBy(column: string, direction: "asc" | "desc" = "asc"): this {
-    this.orders.push({ column, direction });
+  /** Order by `column`; `nulls` puts NULLs first or last on every database. */
+  orderBy(
+    column: string,
+    direction: "asc" | "desc" = "asc",
+    nulls?: "first" | "last",
+  ): this {
+    this.orders.push({ column, direction, nulls });
     return this;
   }
 
@@ -409,7 +561,54 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
 
   /** Every matching row. */
   async get(): Promise<T[]> {
-    return (await this.selectQuery().execute()) as T[];
+    return (await this.selectQuery().execute(this.execOptions)) as T[];
+  }
+
+  /** The matching rows as the database sends them, without loading them all first. */
+  async *stream(chunkSize?: number): AsyncGenerator<T> {
+    yield* this.selectQuery().stream({
+      chunkSize,
+      signal: this.execOptions.signal,
+    });
+  }
+
+  /**
+   * Run `fn` on the matching rows `size` at a time, ordered by `column`
+   * (unique; default `id`) and paged by it (`where id > last`), so it
+   * stays correct while `fn` changes rows. Return `false` to stop.
+   */
+  async chunkById(
+    size: number,
+    fn: (rows: T[], page: number) => unknown,
+    column = "id",
+  ): Promise<boolean> {
+    if (!Number.isSafeInteger(size) || size < 1) {
+      throw new Error(
+        `[Megh ORM] The chunk size must be at least 1, got ${size}.`,
+      );
+    }
+    // The paging condition must not join an `orWhere()` group.
+    const base = this.clone().reset("orders");
+    if (base.hasClauses()) {
+      const conditions = this.clone();
+      base.clauses = [
+        {
+          or: false,
+          build: (eb, sqlite) => conditions.toExpression(eb, sqlite),
+        },
+      ];
+    }
+    const key = column.split(".").pop()!;
+    let after: unknown;
+    for (let page = 1; ; page++) {
+      const query = base.clone().orderBy(column).limit(size).offset(0);
+      if (after !== undefined) query.where(column, ">", after);
+      const rows = await query.get();
+      if (rows.length === 0) return true;
+      if ((await fn(rows, page)) === false) return false;
+      if (rows.length < size) return true;
+      after = rows[rows.length - 1][key];
+    }
   }
 
   /** The first matching row, or `undefined`. */
@@ -512,6 +711,103 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
     }
   }
 
+  /**
+   * Insert rows, or update the ones that already exist: a row "exists" when
+   * a row with the same `uniqueBy` columns does (they need a unique index,
+   * except on SQL Server). `update` lists the columns to overwrite; by
+   * default every given column except `uniqueBy`. Returns the database's
+   * count of affected rows (MySQL counts an update as 2).
+   *
+   * Runs as `ON CONFLICT` (PostgreSQL, SQLite), `ON DUPLICATE KEY UPDATE`
+   * (MySQL, which matches on any unique index) or `MERGE` (SQL Server).
+   */
+  async upsert(
+    rows: Row | Row[],
+    uniqueBy: string | readonly string[],
+    update?: readonly string[],
+  ): Promise<number> {
+    const list = [rows].flat();
+    if (list.length === 0) return 0;
+    const db = getConnection();
+    const sqlite = isSqlite(db);
+    const keys = [uniqueBy].flat() as string[];
+    const bound = list.map((r) => bindRow(r, sqlite));
+    const columns = Object.keys(bound[0]);
+    const signature = [...columns].sort().join("\0");
+    for (const row of bound) {
+      if (Object.keys(row).sort().join("\0") !== signature) {
+        throw new Error(
+          "[Megh ORM] upsert() rows must all have the same columns.",
+        );
+      }
+    }
+    for (const key of keys) {
+      if (!columns.includes(key)) {
+        throw new Error(
+          `[Megh ORM] upsert() rows have no "${key}" column to match by.`,
+        );
+      }
+    }
+    const updates = update ?? columns.filter((c) => !keys.includes(c));
+    const pick = (names: readonly string[], value: (c: string) => unknown) =>
+      Object.fromEntries(names.map((c) => [c, value(c)]));
+    const { sql } = kysely();
+
+    if (usesAdapter(db, "MssqlAdapter")) {
+      const source = bound
+        .map((row) =>
+          db.selectNoFrom((eb: any) =>
+            columns.map((c) => eb.val(row[c]).as(c)),
+          ),
+        )
+        .reduce((all: any, next: any) => all.unionAll(next));
+      let merge: any = db
+        .mergeInto(`${this.tableName} as megh_target`)
+        .using((source as any).as("megh_source"), (join: any) =>
+          keys.reduce(
+            (on: any, k) =>
+              on.onRef(`megh_target.${k}`, "=", `megh_source.${k}`),
+            join,
+          ),
+        );
+      if (updates.length > 0) {
+        merge = merge
+          .whenMatched()
+          .thenUpdateSet((eb: any) =>
+            pick(updates, (c) => eb.ref(`megh_source.${c}`)),
+          );
+      }
+      merge = merge
+        .whenNotMatched()
+        .thenInsertValues((eb: any) =>
+          pick(columns, (c) => eb.ref(`megh_source.${c}`)),
+        );
+      const result = await merge.executeTakeFirst(this.execOptions);
+      return Number(result?.numChangedRows ?? 0);
+    }
+
+    let insert: any = db.insertInto(this.tableName).values(bound);
+    if (usesAdapter(db, "MysqlAdapter")) {
+      insert = insert.onDuplicateKeyUpdate(
+        updates.length > 0
+          ? pick(updates, (c) => sql`values(${sql.ref(c)})`)
+          : // Nothing to update: set a key to itself, a no-op.
+            { [keys[0]]: sql.ref(keys[0]) },
+      );
+    } else {
+      insert = insert.onConflict((oc: any) => {
+        const target = oc.columns(keys);
+        return updates.length > 0
+          ? target.doUpdateSet((eb: any) =>
+              pick(updates, (c) => eb.ref(`excluded.${c}`)),
+            )
+          : target.doNothing();
+      });
+    }
+    const result = await insert.executeTakeFirst(this.execOptions);
+    return Number(result?.numInsertedOrUpdatedRows ?? 0);
+  }
+
   /** Insert a row and return the id the database gave it. */
   async insertGetId<Id = number>(row: Row, idColumn = "id"): Promise<Id> {
     const db = getConnection();
@@ -542,7 +838,7 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
       db.updateTable(this.tableName).set(bindRow(values, isSqlite(db))),
       isSqlite(db),
     );
-    const result = await query.executeTakeFirst();
+    const result = await query.executeTakeFirst(this.execOptions);
     return Number(result?.numUpdatedRows ?? 0);
   }
 
@@ -567,7 +863,7 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
   async delete(): Promise<number> {
     const db = getConnection();
     const query = this.whereOn(db.deleteFrom(this.tableName), isSqlite(db));
-    const result = await query.executeTakeFirst();
+    const result = await query.executeTakeFirst(this.execOptions);
     return Number(result?.numDeletedRows ?? 0);
   }
 
@@ -577,6 +873,11 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
   toSQL(): { sql: string; parameters: readonly unknown[] } {
     const { sql, parameters } = this.selectQuery().compile();
     return { sql, parameters };
+  }
+
+  /** @internal The query as a Kysely select, for subqueries. */
+  toKysely(): any {
+    return this.selectQuery();
   }
 
   /** A copy to build on without changing this query. */
@@ -592,6 +893,11 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
     copy.havings = this.havings;
     copy.limitValue = this.limitValue;
     copy.offsetValue = this.offsetValue;
+    copy.distinctColumns = [...this.distinctColumns];
+    copy.unions = [...this.unions];
+    copy.ctes = [...this.ctes];
+    copy.lock = this.lock && { ...this.lock };
+    copy.execOptions = this.execOptions;
     return copy;
   }
 
@@ -615,7 +921,7 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
 
   private base(db: Kysely<any> | Transaction<any>): any {
     const sqlite = isSqlite(db);
-    let query: any = db.selectFrom(this.tableName);
+    let query: any = this.withCtes(db).selectFrom(this.tableName);
     for (const join of this.joins) {
       const method = {
         inner: "innerJoin",
@@ -637,47 +943,109 @@ export class TableQuery<T extends Row = Row> extends WhereClauses<
     return query;
   }
 
+  /** `db` with this query's common table expressions. */
+  private withCtes(db: Kysely<any> | Transaction<any>): any {
+    let creator: any = db;
+    // SQL Server's CTEs are recursive without the keyword, and reject it.
+    const keyword = !usesAdapter(db as Kysely<any>, "MssqlAdapter");
+    for (const { name, query, recursive } of this.ctes) {
+      const body = () =>
+        recursive
+          ? query.toKysely().unionAll(recursive.toKysely())
+          : query.toKysely();
+      creator =
+        recursive && keyword
+          ? creator.withRecursive(name, body)
+          : creator.with(name, body);
+    }
+    return creator;
+  }
+
   private selectQuery(): any {
     const db = getConnection();
     let query = this.base(db);
     if (this.columns.length === 0 && this.rawColumns.length === 0) {
       query = query.selectAll();
     } else {
-      if (this.columns.length) query = query.select(this.columns);
+      // `table.*` is all of one table's columns.
+      const plain = this.columns.filter((c) => !c.endsWith("*"));
+      for (const column of this.columns) {
+        if (column === "*") query = query.selectAll();
+        else if (column.endsWith(".*"))
+          query = query.selectAll(column.slice(0, -2));
+      }
+      if (plain.length) query = query.select(plain);
       for (const raw of this.rawColumns) {
         query = query.select(rawSql(raw.sql, raw.bindings) as any);
       }
     }
     if (this.isDistinct) query = query.distinct();
-    for (const order of this.orders) {
-      query =
-        "raw" in order
-          ? query.orderBy(kysely().sql.raw(order.raw))
-          : query.orderBy(order.column, order.direction);
+    if (this.distinctColumns.length > 0) {
+      if (!usesAdapter(db, "PostgresAdapter")) {
+        throw new Error("[Megh ORM] distinctOn() works on PostgreSQL only.");
+      }
+      query = query.distinctOn(this.distinctColumns);
     }
-    return applyPaging(db, query, {
+    for (const { all, query: other } of this.unions) {
+      query = all
+        ? query.unionAll(other.toKysely())
+        : query.union(other.toKysely());
+    }
+    const { sql } = kysely();
+    for (const order of this.orders) {
+      if ("raw" in order) {
+        query = query.orderBy(sql.raw(order.raw));
+        continue;
+      }
+      if (order.nulls) {
+        const first = order.nulls === "first";
+        query = query.orderBy(
+          sql`case when ${sql.ref(order.column)} is null then ${sql.lit(first ? 0 : 1)} else ${sql.lit(first ? 1 : 0)} end`,
+        );
+      }
+      query = query.orderBy(order.column, order.direction);
+    }
+    query = applyPaging(db, query, {
       limit: this.limitValue,
       offset: this.offsetValue,
       ordered: this.orders.length > 0,
     });
+    if (this.lock && !isSqlite(db)) {
+      if (usesAdapter(db, "MssqlAdapter")) {
+        throw new Error(
+          "[Megh ORM] lockForUpdate() and sharedLock() aren't supported on SQL Server.",
+        );
+      }
+      query =
+        this.lock.mode === "update" ? query.forUpdate() : query.forShare();
+      if (this.lock.modifier === "skipLocked") query = query.skipLocked();
+      if (this.lock.modifier === "noWait") query = query.noWait();
+    }
+    return query;
   }
 
   private async aggregate(fn: (eb: any) => any): Promise<unknown> {
     const db = getConnection();
-    // Grouped or distinct queries are counted as a subquery, as their rows.
-    if (this.groups.length || this.isDistinct) {
+    // Grouped, distinct and union queries are counted as a subquery, as their rows.
+    if (
+      this.groups.length ||
+      this.isDistinct ||
+      this.distinctColumns.length ||
+      this.unions.length
+    ) {
       const inner = this.clone().reset("orders");
       inner.limitValue = undefined;
       inner.offsetValue = undefined;
+      inner.lock = undefined;
       const row: any = await db
         .selectFrom(inner.selectQuery().as("sub"))
         .select((eb: any) => fn(eb).as("aggregate"))
-        .executeTakeFirst();
+        .executeTakeFirst(this.execOptions);
       return row?.aggregate;
     }
     const row: any = await this.base(db)
       .select((eb: any) => fn(eb).as("aggregate"))
-      .executeTakeFirst();
+      .executeTakeFirst(this.execOptions);
     return row?.aggregate;
   }
 

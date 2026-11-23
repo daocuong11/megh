@@ -95,7 +95,7 @@ export type BelongsToManyKeys<M> = keyof {
   string;
 
 /**
- * Keys of `hasMany` and `hasOne` relations. A field typed as a model
+ * Keys of `hasMany`, `hasOne`, `morphMany` and `morphOne` relations. A field typed as a model
  * (`Profile | null`, `Post[]`) counts too: its type can't tell `hasOne`
  * from `belongsTo`, and `related()` checks the real kind when it runs.
  */
@@ -104,7 +104,11 @@ export type HasRelationKeys<M> = keyof {
     K in keyof M as IsAny<M[K]> extends true
       ? never
       : NonNullable<M[K]> extends
-            | { readonly [RELATION]: { type: "hasMany" | "hasOne" } }
+            | {
+                readonly [RELATION]: {
+                  type: "hasMany" | "hasOne" | "morphMany" | "morphOne";
+                };
+              }
             | ModelLike
             | readonly ModelLike[]
         ? K
@@ -155,24 +159,56 @@ type Resolve<R, Shape> =
       ? Shape[]
       : Shape | null;
 
-/** Eager-loaded relations for the path union `P`. */
-type Loaded<M, P extends string> = {
+/**
+ * What a `with(path, q => …)` constraint does to the rows loaded at `path`:
+ * the columns it selects, the relations and counts it adds, and the
+ * constraints on relations below it.
+ */
+export interface EagerShape {
+  paths: string;
+  select: string;
+  extra: object;
+  nested: object;
+}
+
+/** Constraints under `H`, keyed by the rest of the path: `{ "posts.notes": … }` → `{ notes: … }`. */
+type Below<E, H extends string> = {
+  [K in keyof E as K extends `${H}.${infer R}` ? R : never]: E[K];
+};
+
+/** The row loaded at relation `H`: narrowed by its constraint in `E`, if any. */
+type LoadedRow<R, T extends string, E, H extends string> = H extends keyof E
+  ? E[H] extends EagerShape
+    ? Row<
+        R,
+        T | E[H]["paths"],
+        E[H]["select"] & ColumnKeys<R>,
+        Below<E, H> & E[H]["nested"]
+      > &
+        E[H]["extra"]
+    : Row<R, T, ColumnKeys<R>, Below<E, H>>
+  : Row<R, T, ColumnKeys<R>, Below<E, H>>;
+
+/** Eager-loaded relations for the path union `P`, narrowed by constraints `E`. */
+type Loaded<M, P extends string, E> = {
   [H in Head<P> & RelationKeys<M>]: Resolve<
     M[H],
-    Row<RelatedModel<M[H]>, Tail<P, H>>
+    LoadedRow<RelatedModel<M[H]>, Tail<P, H>, E, H>
   >;
 };
 
 /**
  * A query result: the selected columns `S`, the relations loaded through
- * paths `P`, and the model's methods and getters. Columns declared optional
- * (`id?: number`, filled in by the database) are present on loaded rows.
+ * paths `P` (narrowed by the `with()` constraints `E`), and the model's
+ * methods and getters. Columns declared optional (`id?: number`, filled in
+ * by the database) are present on loaded rows.
  */
 export type Row<
   M,
   P extends string = never,
   S extends ColumnKeys<M> = ColumnKeys<M>,
-> = Required<Pick<Columns<M>, S>> & Loaded<M, P> & Members<M>;
+  E = {},
+> = Required<Pick<Columns<M>, S>> & Loaded<M, P, E> & Members<M>;
 
 /** The static side of a model class. */
 export interface ModelClass<M = any> {
@@ -187,6 +223,16 @@ export interface ModelClass<M = any> {
   readonly softDeletes: boolean;
   readonly deletedAt: string;
   readonly casts: Readonly<Record<string, Cast>>;
+  /** Properties `toJSON()` leaves out. */
+  readonly hidden?: readonly string[];
+  /** When set, the only properties `toJSON()` includes (plus loaded relations and extras). */
+  readonly visible?: readonly string[] | null;
+  /** Getters `toJSON()` adds. */
+  readonly appends?: readonly string[];
+  /** Filters every query on the model applies, by name. */
+  readonly globalScopes?: Readonly<Record<string, (query: any) => unknown>>;
+  /** The value polymorphic `<name>_type` columns name this model by. Defaults to the table name. */
+  readonly morphType?: string;
 }
 
 /** Columns the database fills in: `static generated` (literal), else `"id"`. */

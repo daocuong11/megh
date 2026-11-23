@@ -23,6 +23,7 @@ import {
   snakeCase,
   type BelongsToManyOptions,
   type DeclaredRelation,
+  type ThroughOptions,
 } from "./relations";
 import type * as relations from "./relations";
 
@@ -37,6 +38,16 @@ export type HasOne<M> = relations.HasOne<M>;
 export type BelongsTo<M> = relations.BelongsTo<M>;
 /** A many-to-many relation field. Loads as `M[]`, each with `pivot`. */
 export type BelongsToMany<M, Pivot = {}> = relations.BelongsToMany<M, Pivot>;
+/** A distant one-to-many relation field. Loads as `M[]`. */
+export type HasManyThrough<M> = relations.HasManyThrough<M>;
+/** A distant one-to-one relation field. Loads as `M | null`. */
+export type HasOneThrough<M> = relations.HasOneThrough<M>;
+/** A polymorphic one-to-many relation field. Loads as `M[]`. */
+export type MorphMany<M> = relations.MorphMany<M>;
+/** A polymorphic one-to-one relation field. Loads as `M | null`. */
+export type MorphOne<M> = relations.MorphOne<M>;
+/** The inverse of a polymorphic relation. Loads as one of the models, or `null`. */
+export type MorphTo<M> = relations.MorphTo<M>;
 
 /** Column types. They pick the SQL type in schemas and the value conversion. */
 export type ColumnType =
@@ -367,6 +378,88 @@ export function BelongsToMany<C extends RelatedClass>(
   return relation(
     declareRelation("belongsToMany", related, {
       pivot: { ...pivot, columns: [...pivotColumns] },
+    }),
+  );
+}
+
+/**
+ * Distant one-to-many through an intermediate model. Type the field
+ * `HasManyThrough<Post>` (or `Post[]`).
+ */
+export function HasManyThrough<C extends RelatedClass>(
+  related: () => C,
+  through: () => RelatedClass,
+  options: ThroughOptions = {},
+): FieldDecorator {
+  return relation(
+    declareRelation("hasManyThrough", related, {
+      through: { model: through, ...options },
+    }),
+  );
+}
+
+/** Distant one-to-one through an intermediate model. Type the field `HasOneThrough<Post>`. */
+export function HasOneThrough<C extends RelatedClass>(
+  related: () => C,
+  through: () => RelatedClass,
+  options: ThroughOptions = {},
+): FieldDecorator {
+  return relation(
+    declareRelation("hasOneThrough", related, {
+      through: { model: through, ...options },
+    }),
+  );
+}
+
+export interface MorphOptions {
+  /** Key on this table. Defaults to the primary key. */
+  localKey?: string;
+}
+
+/**
+ * Polymorphic one-to-many: related rows point here with `<name>_id` and
+ * `<name>_type`. Type the field `MorphMany<Comment>` (or `Comment[]`).
+ */
+export function MorphMany<C extends RelatedClass>(
+  related: () => C,
+  name: string,
+  options: MorphOptions = {},
+): FieldDecorator {
+  return relation(
+    declareRelation("morphMany", related, {
+      morphName: name,
+      localKey: options.localKey,
+    }),
+  );
+}
+
+/** Polymorphic one-to-one. Type the field `MorphOne<Image>`. */
+export function MorphOne<C extends RelatedClass>(
+  related: () => C,
+  name: string,
+  options: MorphOptions = {},
+): FieldDecorator {
+  return relation(
+    declareRelation("morphOne", related, {
+      morphName: name,
+      localKey: options.localKey,
+    }),
+  );
+}
+
+/**
+ * The inverse of MorphMany/MorphOne: the owner one of `targets`, named by
+ * `<name>_id` and `<name>_type` (name defaults to the field). Type the
+ * field `MorphTo<Post | Video>`.
+ */
+export function MorphTo(
+  targets: () => RelatedClass[],
+  name?: string,
+): FieldDecorator {
+  return relation(
+    declareRelation("morphTo", () => targets()[0], {
+      morphName: name,
+      morphTargets: targets,
     }),
   );
 }
