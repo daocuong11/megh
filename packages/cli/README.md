@@ -34,7 +34,7 @@ npm run start:dev
 | `make:service` | `m:s` | `-f`, `-r`, `-m <model>`, `--typeorm`, `--root <dir>` | Create a service |
 | `make:config` | `m:cnf` | `-f`, `--root <dir>` | Create an `@AppConfig` class |
 | `make:middleware` | `m:mlwr` | `-f`, `--root <dir>` | Create a middleware |
-| `make:dto` | `m:dto` | `-f`, `--root <dir>` | Create a class-validator DTO |
+| `make:dto` | `m:dto` | `-f`, `--root <dir>` | Create a DTO |
 | `make:class` | `m:cls` | `-f`, `--root <dir>` | Create a plain class in `src/classes` |
 | `make:test` | `m:t` | `-f`, `--type <kind>`, `--root <dir>` | Create a unit test (`<name>.spec.ts`) for an existing file |
 | `make:mail` | `m:mail` | `-f`, `--root <dir>` | Create a Mailable in `src/mail` |

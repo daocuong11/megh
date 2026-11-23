@@ -4,12 +4,17 @@
  * @email xtrinsic96@gmail.com
  * @url https://github.com/xtareq
  */
-import {
-  instanceToPlain,
-  plainToInstance,
-  ClassConstructor,
-} from "class-transformer";
 import { withStatus } from "./results";
+import { shapeAs } from "../validator/serialize";
+
+/** A class to shape response data with (`@Expose`, `@Exclude`, `@Type`, `@Transform`). */
+export type ClassConstructor<T> = new (...args: any[]) => T;
+
+/** class-transformer's response options: only exposed properties, converted to their declared types. */
+const RESPONSE_OPTIONS = {
+  enableImplicitConversion: true,
+  excludeExtraneousValues: true,
+};
 
 export interface IHttpResponse<T extends any> {
   message: string;
@@ -22,14 +27,11 @@ export class HttpResponse {
       const isPaginated = obj?.hasOwnProperty("total");
       const dataToTransform = isPaginated ? obj.data : obj;
 
-      const transformedData = plainToInstance(s, dataToTransform, {
-        enableImplicitConversion: true,
-        excludeExtraneousValues: true,
-      });
+      const transformedData = shapeAs(s, dataToTransform, RESPONSE_OPTIONS);
 
       const transformedResult = isPaginated
-        ? { ...obj, data: instanceToPlain(transformedData) }
-        : { data: instanceToPlain(transformedData) };
+        ? { ...obj, data: transformedData }
+        : { data: transformedData };
 
       return {
         message: "success",
@@ -42,13 +44,10 @@ export class HttpResponse {
 
   static Created<T>(obj: any, s?: ClassConstructor<T>): IHttpResponse<T> {
     if (s) {
-      const transformedData = plainToInstance(s, obj, {
-        enableImplicitConversion: true,
-        excludeExtraneousValues: true,
-      });
+      const transformedData = shapeAs(s, obj, RESPONSE_OPTIONS);
 
       return withStatus(
-        { message: "created", data: instanceToPlain(transformedData) as T },
+        { message: "created", data: transformedData as T },
         201,
       );
     }

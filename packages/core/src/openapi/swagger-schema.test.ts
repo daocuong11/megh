@@ -13,10 +13,10 @@ let currentValidationMetadatas: Array<{
   constraints: any[];
 }> = [];
 
-vi.mock("class-validator", () => ({
-  getMetadataStorage: vi.fn(() => ({
-    getTargetValidationMetadatas: vi.fn(() => currentValidationMetadatas),
-  })),
+// swagger-schema reads class-validator rules through optional-libs.
+vi.mock("../validator/optional-libs", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../validator/optional-libs")>()),
+  classValidatorRules: vi.fn(() => currentValidationMetadatas),
 }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

@@ -9,23 +9,7 @@
  * would silently skip some of them.
  */
 import { isMeghValidatorClass } from "./metadata";
-import { getTransformerProperties } from "../openapi/schema-properties";
-
-function hasClassValidatorRules(target: Function): boolean {
-  try {
-    const { getMetadataStorage } = require("class-validator");
-    return (
-      getMetadataStorage().getTargetValidationMetadatas(
-        target,
-        undefined,
-        true,
-        false,
-      ).length > 0
-    );
-  } catch {
-    return false;
-  }
-}
+import { classValidatorRules, usesClassTransformer } from "./optional-libs";
 
 /**
  * Throw when `target` uses Megh decorators together with class-validator or
@@ -33,11 +17,12 @@ function hasClassValidatorRules(target: Function): boolean {
  */
 export function assertMeghOnly(target: Function) {
   if (!isMeghValidatorClass(target)) return;
-  const other = hasClassValidatorRules(target)
-    ? "class-validator"
-    : getTransformerProperties(target).length > 0
-      ? "class-transformer"
-      : undefined;
+  const other =
+    classValidatorRules(target).length > 0
+      ? "class-validator"
+      : usesClassTransformer(target)
+        ? "class-transformer"
+        : undefined;
   if (other) {
     throw new Error(
       `[Megh] ${target.name} mixes @meghjs/core validation decorators with ${other} ones. ` +

@@ -100,7 +100,7 @@ describe("make:resource from a migration", () => {
     expect(update).toContain("@IsOptional()\n  @IsString()\n  name?: string;");
     expect(update).not.toContain("!:");
     expect(dto).toContain("export class ListUsersQuery");
-    expect(dto).toMatch(/import \{ [^}]*IsEmail[^}]*IsObject[^}]* \} from 'class-validator';/);
+    expect(dto).toMatch(/import \{ [^}]*IsEmail[^}]*IsObject[^}]* \} from '@meghjs\/core';/);
   });
 
   it("writes a Megh ORM service and a typed controller", () => {

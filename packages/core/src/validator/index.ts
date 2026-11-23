@@ -8,9 +8,28 @@
  * class-transformer decorator names, compiled once per class.
  */
 export * from "./decorators";
-export { Type, Transform } from "./transform";
-export type { TypeOptions } from "./transform";
-export { validateDto } from "./compiler";
+export {
+  Type,
+  Transform,
+  Expose,
+  Exclude,
+  plainToInstance,
+  instanceToPlain,
+} from "./transform";
+export type { TypeOptions, ClassTransformOptions } from "./transform";
+export {
+  Validate,
+  ValidatorConstraint,
+  registerDecorator,
+  ValidateBy,
+  buildMessage,
+} from "./custom";
+export type {
+  ValidatorConstraintInterface,
+  ValidationDecoratorOptions,
+  ValidateByOptions,
+} from "./custom";
+export { validateDto, validateDtoAsync } from "./compiler";
 export type { ValidationIssue, DtoValidationResult } from "./compiler";
 export { isMeghValidatorClass, TransformationType } from "./metadata";
 export type {
@@ -19,4 +38,7 @@ export type {
   TransformFnParams,
   TransformOptions as TransformDecoratorOptions,
   TypeHelpOptions,
+  ExposeOptions,
+  ExcludeOptions,
+  Discriminator,
 } from "./metadata";

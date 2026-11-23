@@ -46,8 +46,17 @@ export type RuleKind =
   | "whitelistValidation";
 
 export type RuleCheck = {
-  /** Reference implementation: is `value` valid? */
-  fn: (value: any, constraints: any[], prepared: any) => boolean;
+  /**
+   * Reference implementation: is `value` valid? Custom checks also get the
+   * object being validated, and may return a promise.
+   */
+  fn: (
+    value: any,
+    constraints: any[],
+    prepared: any,
+    object?: any,
+    whole?: any,
+  ) => boolean | Promise<boolean>;
   /**
    * The same check as a JavaScript expression, for the compiler. `x` is the
    * value expression, `k` the constraints array, `p` the prepared value.
@@ -70,6 +79,13 @@ export type ValidationRule = {
   check?: RuleCheck;
   /** For `conditionalValidation`: validate only when this returns truthy. */
   condition?: (object: any, value: any) => boolean;
+  /**
+   * A user-defined check (`@Validate`, `registerDecorator`, `ValidateBy`). Its
+   * `fn` gets the object as a fourth argument and may return a promise.
+   */
+  custom?: boolean;
+  /** Declared async (`@ValidatorConstraint({ async: true })`, `registerDecorator({ async: true })`). */
+  async?: boolean;
 };
 
 export type TypeHelpOptions = {
@@ -78,9 +94,21 @@ export type TypeHelpOptions = {
   property: string;
 };
 
+/** class-transformer's `DiscriminatorDescriptor`. */
+export type Discriminator = {
+  /** The property of the plain object that names its type. */
+  property: string;
+  /** `name` is the property's value, `value` the class it selects. */
+  subTypes: { name: string; value: Function }[];
+};
+
 export type TypeRule = {
   typeFunction?: (options?: TypeHelpOptions) => Function;
   reflectedType: any;
+  options?: {
+    discriminator?: Discriminator;
+    keepDiscriminatorProperty?: boolean;
+  };
 };
 
 /** class-transformer's `TransformationType`. */
@@ -111,6 +139,28 @@ export type TransformRule = {
   options: TransformOptions;
 };
 
+/** class-transformer's `ExposeOptions`. */
+export type ExposeOptions = {
+  /** The key the property has in plain objects (request bodies, responses). */
+  name?: string;
+  /** Accepted for compatibility. Megh transforms without groups, so a grouped `@Expose` never applies. */
+  groups?: string[];
+  /** Accepted for compatibility; Megh transforms without a version. */
+  since?: number;
+  /** Accepted for compatibility; Megh transforms without a version. */
+  until?: number;
+  toClassOnly?: boolean;
+  toPlainOnly?: boolean;
+};
+
+/** class-transformer's `ExcludeOptions`. */
+export type ExcludeOptions = {
+  toClassOnly?: boolean;
+  toPlainOnly?: boolean;
+};
+
+export type Strategy = "none" | "exposeAll" | "excludeAll";
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
@@ -119,6 +169,11 @@ export type TransformRule = {
 const validationRules = new Map<Function, ValidationRule[]>();
 const typeRules = new Map<Function, Map<string, TypeRule>>();
 const transformRules = new Map<Function, Map<string, TransformRule[]>>();
+const exposeRules = new Map<Function, Map<string, ExposeOptions>>();
+const excludeRules = new Map<Function, Map<string, ExcludeOptions>>();
+/** Class-level `@Expose()` / `@Exclude()`. */
+const classExpose = new Set<Function>();
+const classExclude = new Set<Function>();
 
 /** Bumped on every registration, so compiled validators can be rebuilt. */
 let revision = 0;
@@ -154,6 +209,114 @@ export function addTransformRule(
   if (!list) map.set(propertyName, (list = []));
   list.push(rule);
   revision++;
+}
+
+export function addExposeRule(
+  target: Function,
+  propertyName: string | undefined,
+  options: ExposeOptions,
+) {
+  if (propertyName === undefined) classExpose.add(target);
+  else {
+    let map = exposeRules.get(target);
+    if (!map) exposeRules.set(target, (map = new Map()));
+    map.set(propertyName, options);
+  }
+  revision++;
+}
+
+export function addExcludeRule(
+  target: Function,
+  propertyName: string | undefined,
+  options: ExcludeOptions,
+) {
+  if (propertyName === undefined) classExclude.add(target);
+  else {
+    let map = excludeRules.get(target);
+    if (!map) excludeRules.set(target, (map = new Map()));
+    map.set(propertyName, options);
+  }
+  revision++;
+}
+
+/** class-transformer's `getStrategy`: from class-level `@Expose` / `@Exclude` on `target` itself. */
+export function getStrategy(target: Function): Strategy {
+  const exclude = classExclude.has(target);
+  const expose = classExpose.has(target);
+  if (exclude === expose) return "none";
+  return exclude ? "excludeAll" : "exposeAll";
+}
+
+/** Does `toClassOnly` / `toPlainOnly` let a rule apply in this direction? */
+function appliesTo(
+  options: { toClassOnly?: boolean; toPlainOnly?: boolean } | undefined,
+  type: TransformationType,
+): boolean {
+  if (!options) return true;
+  if (options.toClassOnly === true && options.toPlainOnly === true) return true;
+  if (options.toClassOnly === true)
+    return (
+      type === TransformationType.CLASS_TO_CLASS ||
+      type === TransformationType.PLAIN_TO_CLASS
+    );
+  if (options.toPlainOnly === true)
+    return type === TransformationType.CLASS_TO_PLAIN;
+  return true;
+}
+
+/** Ancestors first, then the class: class-transformer's `getMetadata` order. */
+function collect<V>(
+  maps: Map<Function, Map<string, V>>,
+  target: Function,
+): [string, V][] {
+  const out: [string, V][] = [];
+  for (const cls of [...getAncestors(target).reverse(), target]) {
+    for (const entry of maps.get(cls) ?? []) out.push(entry);
+  }
+  return out;
+}
+
+/** Names of `@Expose`d properties for a direction (`getExposedProperties`). */
+export function getExposedProperties(
+  target: Function,
+  type: TransformationType,
+): string[] {
+  return collect(exposeRules, target)
+    .filter(([, options]) => appliesTo(options, type))
+    .map(([name]) => name);
+}
+
+/** Names of `@Exclude`d properties for a direction (`getExcludedProperties`). */
+export function getExcludedProperties(
+  target: Function,
+  type: TransformationType,
+): string[] {
+  return collect(excludeRules, target)
+    .filter(([, options]) => appliesTo(options, type))
+    .map(([name]) => name);
+}
+
+/** `@Expose` options for a property: the class's own, else the nearest ancestor's. */
+export function findExposeRule(
+  target: Function,
+  propertyName: string,
+): ExposeOptions | undefined {
+  for (const cls of [target, ...getAncestors(target)]) {
+    const found = exposeRules.get(cls)?.get(propertyName);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+/** The property whose `@Expose({ name })` is `name` (`findExposeMetadataByCustomName`). */
+export function findExposedPropertyByName(
+  target: Function,
+  name: string,
+): string | undefined {
+  for (const [property, options] of collect(exposeRules, target)) {
+    if (options.name === name) return property;
+  }
+  return undefined;
 }
 
 /**
@@ -216,6 +379,7 @@ export function findTypeRule(
 export function findTransformRules(
   target: Function,
   propertyName: string,
+  type: TransformationType = TransformationType.PLAIN_TO_CLASS,
 ): TransformRule[] {
   const fromAncestors: TransformRule[] = [];
   for (const ancestor of getAncestors(target)) {
@@ -230,27 +394,42 @@ export function findTransformRules(
     .filter(({ options }) => {
       if (!options) return true;
       if (options.groups && options.groups.length) return false;
-      if (options.toClassOnly === true && options.toPlainOnly === true)
-        return true;
-      if (options.toClassOnly === true) return true;
-      if (options.toPlainOnly === true) return false;
-      return true;
+      return appliesTo(options, type);
     });
 }
 
-/** Property names with `@Type` or `@Transform`, on the class and its ancestors. */
+/**
+ * Property names with `@Type`, `@Transform`, `@Expose` or `@Exclude`, on the
+ * class and its ancestors.
+ */
 export function getTransformedProperties(target: Function): string[] {
   const names = new Set<string>();
+  if (typeof target !== "function" || !target.prototype) return [];
   for (const cls of [target, ...getAncestors(target)]) {
     for (const key of typeRules.get(cls)?.keys() ?? []) names.add(key);
     for (const key of transformRules.get(cls)?.keys() ?? []) names.add(key);
+    for (const key of exposeRules.get(cls)?.keys() ?? []) names.add(key);
+    for (const key of excludeRules.get(cls)?.keys() ?? []) names.add(key);
   }
   return [...names];
 }
 
-/** Has `target` (or an ancestor) any `@Type` / `@Transform`? */
+/** Has `target` (or an ancestor) any Megh transformation decorator, class-level ones included? */
 export function hasTransformRules(target: Function): boolean {
-  return getTransformedProperties(target).length > 0;
+  if (typeof target !== "function" || !target.prototype) return false;
+  if (getTransformedProperties(target).length > 0) return true;
+  return [target, ...getAncestors(target)].some(
+    (cls) => classExpose.has(cls) || classExclude.has(cls),
+  );
+}
+
+/** Is `name` `@Exclude`d in both directions on `target`? Used by OpenAPI. */
+export function isExcludedEverywhere(target: Function, name: string): boolean {
+  for (const cls of [target, ...getAncestors(target)]) {
+    const options = excludeRules.get(cls)?.get(name);
+    if (options) return !options.toClassOnly && !options.toPlainOnly;
+  }
+  return false;
 }
 
 /**
@@ -277,5 +456,17 @@ export function copyRules(
         addTransformRule(target, name, rule);
       }
     }
+    const expose = findExposeRule(source, name);
+    if (expose) addExposeRule(target, name, expose);
+    for (const cls of [source, ...getAncestors(source)]) {
+      const exclude = excludeRules.get(cls)?.get(name);
+      if (exclude) {
+        addExcludeRule(target, name, exclude);
+        break;
+      }
+    }
   }
+  const strategy = getStrategy(source);
+  if (strategy === "excludeAll") addExcludeRule(target, undefined, {});
+  else if (strategy === "exposeAll") addExposeRule(target, undefined, {});
 }

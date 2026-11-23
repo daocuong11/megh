@@ -52,8 +52,6 @@ export type NewOptions = {
 
 /** Third-party versions for generated projects. */
 const DEP_VERSIONS: Record<string, string> = {
-  "class-transformer": "^0.5.1",
-  "class-validator": "^0.14.2",
   "reflect-metadata": "^0.2.2",
   "@fastify/cors": "^11.0.0",
   "@fastify/swagger": "^9.7.0",
@@ -186,7 +184,8 @@ export function packageJson(
     "@meghjs/cli": `^${v}`,
   };
   const pick = (...names: string[]) => names.forEach((n) => (deps[n] = DEP_VERSIONS[n]));
-  pick("class-transformer", "class-validator", "reflect-metadata");
+  // DTO decorators (IsString, Type, …) come from @meghjs/core.
+  pick("reflect-metadata");
   if (features.includes("cors")) pick("@fastify/cors");
   if (features.includes("orm")) pick(...DATABASE_SETUP[database].drivers);
   // useOpenApi() builds the spec with @fastify/swagger and serves it with Swagger UI.

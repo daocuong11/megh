@@ -40,7 +40,7 @@ handler runs.
 ```
 src/
 ├── controllers/todo.controller.ts   # routes; @Body() / @Query() DTOs are validated
-├── dtos/todo.dto.ts                 # class-validator rules, PartialType for updates
+├── dtos/todo.dto.ts                 # validation rules, PartialType for updates
 ├── services/todo.service.ts         # logic + in-memory storage, paginated()
 ├── services/todo.service.spec.ts    # unit tests
 └── app.ts                           # registers controllers and OpenAPI

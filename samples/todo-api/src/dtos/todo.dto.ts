@@ -1,5 +1,3 @@
-import { PartialType } from '@meghjs/core';
-import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
   IsDateString,
@@ -11,7 +9,10 @@ import {
   MaxLength,
   Min,
   MinLength,
-} from 'class-validator';
+  PartialType,
+  Transform,
+  Type,
+} from '@meghjs/core';
 import type { Priority } from '../models/todo';
 
 const PRIORITIES: Priority[] = ['low', 'medium', 'high'];

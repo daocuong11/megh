@@ -4,8 +4,8 @@
  * @email xtrinsic96@gmail.com
  * @url https://github.com/xtareq
  */
-import { getMetadataStorage } from "class-validator";
 import { CONTROLLER_META_KEY } from "../common/container";
+import { classValidatorRules } from "../validator/optional-libs";
 import { ParamSchema } from "./openapi";
 import {
   getRegisteredSchemaProperties,
@@ -16,7 +16,9 @@ import {
 import {
   findTypeRule,
   getTransformedProperties,
+  findExposeRule,
   getValidationRules,
+  isExcludedEverywhere,
 } from "../validator/metadata";
 
 // Decorator to add OpenAPI metadata to properties
@@ -218,12 +220,7 @@ function buildClassSchema(
 
   const innerStack = new Set(stack).add(classType);
   const validationMetadata: any[] = [
-    ...(getMetadataStorage().getTargetValidationMetadatas(
-      classType,
-      "",
-      true,
-      false,
-    ) ?? []),
+    ...classValidatorRules(classType),
     // Megh's decorators: same names and constraints as class-validator's.
     ...getValidationRules(classType),
   ];
@@ -239,6 +236,8 @@ function buildClassSchema(
       propertyName,
     );
     if (openApiMeta?.exclude) continue;
+    // Megh's @Exclude() (both directions): never in a body or a response.
+    if (isExcludedEverywhere(classType, propertyName)) continue;
 
     const propertyType = Reflect.getMetadata(
       "design:type",
@@ -378,8 +377,28 @@ function buildClassSchema(
     }
   }
 
+  renameExposedProperties(classType, schema);
   if (schema.required.length === 0) delete schema.required;
   return schema;
+}
+
+/**
+ * Megh's `@Expose({ name })` reads and writes the property under `name`, so
+ * the schema uses that key.
+ */
+function renameExposedProperties(classType: Function, schema: any) {
+  for (const key of Object.keys(schema.properties)) {
+    const name = findExposeRule(classType, key)?.name;
+    if (!name || name === key) continue;
+    const properties: any = {};
+    for (const [k, v] of Object.entries(schema.properties)) {
+      properties[k === key ? name : k] = v;
+    }
+    schema.properties = properties;
+    schema.required = schema.required.map((r: string) =>
+      r === key ? name : r,
+    );
+  }
 }
 
 /**

@@ -1,5 +1,11 @@
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  Type,
+} from '@meghjs/core';
 
 /** `POST /categories` body. Columns the database fills in are optional. */
 export class CreateCategoryDto {

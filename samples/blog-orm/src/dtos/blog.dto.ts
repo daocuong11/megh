@@ -1,5 +1,3 @@
-import { PartialType } from '@meghjs/core';
-import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
@@ -13,7 +11,9 @@ import {
   MaxLength,
   Min,
   MinLength,
-} from 'class-validator';
+  PartialType,
+  Type,
+} from '@meghjs/core';
 
 // ── Users ────────────────────────────────────────────────────────────────
 
