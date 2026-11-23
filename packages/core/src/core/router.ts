@@ -51,7 +51,7 @@ import {
   CompiledValidator,
 } from "../common/utils/compiled-validation";
 import { isMeghValidatorClass } from "../validator/metadata";
-import { validateDto } from "../validator/compiler";
+import { runValidation } from "../validator/compiler";
 import { assertMeghOnly } from "../validator/compat";
 import {
   resolveFilter,
@@ -798,11 +798,14 @@ export class MeghRouter {
       // DTOs use class-validator, or (experimental flag) a validator compiled
       // from its metadata; see common/utils/compiled-validation.ts.
       // `undefined` = transformAndValidate.
+      // A Megh validator returns its result synchronously unless a custom
+      // validator returned a promise.
       const _compile = (meta: any): CompiledValidator | undefined => {
         if (!meta.validatorClass) return undefined;
         if (isMeghValidatorClass(meta.dataType)) {
           assertMeghOnly(meta.dataType);
-          return (value) => validateDto(meta.dataType, value);
+          return ((value: unknown) =>
+            runValidation(meta.dataType, value)) as CompiledValidator;
         }
         return this.compiledValidation
           ? compileValidator(meta.dataType)
@@ -903,8 +906,13 @@ export class MeghRouter {
               for (let i = 0; i < allMeta.query.length; i++) {
                 const queryMeta = allMeta.query[i];
                 if (queryMeta.validatorClass) {
+                  let result: any = _queryValidators[i]?.(
+                    args[queryMeta.index],
+                  );
+                  if (result && typeof result.then === "function")
+                    result = await result;
                   const { value, errors } =
-                    _queryValidators[i]?.(args[queryMeta.index]) ??
+                    result ??
                     (await transformAndValidate(
                       queryMeta.dataType,
                       args[queryMeta.index],
@@ -926,8 +934,11 @@ export class MeghRouter {
               for (let i = 0; i < allMeta.body.length; i++) {
                 const bodyMeta = allMeta.body[i];
                 if (bodyMeta.validatorClass) {
+                  let result: any = _bodyValidators[i]?.(args[bodyMeta.index]);
+                  if (result && typeof result.then === "function")
+                    result = await result;
                   const { value, errors } =
-                    _bodyValidators[i]?.(args[bodyMeta.index]) ??
+                    result ??
                     (await transformAndValidate(
                       bodyMeta.dataType,
                       args[bodyMeta.index],

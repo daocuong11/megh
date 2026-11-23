@@ -37,7 +37,22 @@ export type DtoValidationResult<T> = {
   errors: ValidationIssue[] | null;
 };
 
-type CheckFn = (object: any, errors: ValidationIssue[], prefix: string) => void;
+/** A custom check that returned a promise; settled after the synchronous pass. */
+type Pending = {
+  result: Promise<any>;
+  rule: ValidationRule;
+  object: any;
+  value: any;
+  /** The property's error entry, reserved in property order; filled when the check fails. */
+  entry?: ValidationIssue;
+};
+
+type CheckFn = (
+  object: any,
+  errors: ValidationIssue[],
+  prefix: string,
+  pending: Pending[],
+) => void;
 
 const UNKNOWN_VALUE = "an unknown value was passed to the validate function";
 
@@ -61,12 +76,43 @@ export function getCheck(target: Function): CheckFn | null {
  * validate it with its Megh decorators. Unknown properties are errors.
  *
  * Same result as `transformAndValidate` with class-validator and
- * class-transformer decorators.
+ * class-transformer decorators. Throws when a custom validator returns a
+ * promise; use `validateDtoAsync` for DTOs with async validators.
  */
 export function validateDto<T extends object>(
   target: new () => T,
   value: unknown,
 ): DtoValidationResult<T> {
+  const result = runValidation(target, value);
+  if (isPromiseLike(result)) {
+    // Keep the rejection from being reported as unhandled.
+    result.catch(() => undefined);
+    throw new Error(
+      `[Megh] ${target.name} has async validators; use validateDtoAsync() instead of validateDto().`,
+    );
+  }
+  return result;
+}
+
+/** `validateDto` for DTOs whose custom validators may return promises. */
+export async function validateDtoAsync<T extends object>(
+  target: new () => T,
+  value: unknown,
+): Promise<DtoValidationResult<T>> {
+  return runValidation(target, value);
+}
+
+const isPromiseLike = (v: any): v is Promise<any> =>
+  v !== null && typeof v === "object" && typeof v.then === "function";
+
+/**
+ * Validate synchronously when every check is synchronous; otherwise return a
+ * promise of the same result. The router uses this.
+ */
+export function runValidation<T extends object>(
+  target: new () => T,
+  value: unknown,
+): DtoValidationResult<T> | Promise<DtoValidationResult<T>> {
   if (
     value !== null &&
     value !== undefined &&
@@ -81,14 +127,37 @@ export function validateDto<T extends object>(
   }
   const instance = toInstance(target, (value ?? {}) as object);
   const errors: ValidationIssue[] = [];
+  const pending: Pending[] = [];
   const check = getCheck(target);
-  if (check) check(instance, errors, "");
+  if (check) check(instance, errors, "", pending);
   else
     errors.push({
       path: "undefined",
       constraints: { unknownValue: UNKNOWN_VALUE },
     });
+  if (pending.length > 0) {
+    return settle(pending, errors).then(() => ({
+      value: instance,
+      errors: errors.length > 0 ? errors : null,
+    }));
+  }
   return { value: instance, errors: errors.length > 0 ? errors : null };
+}
+
+/**
+ * Wait for async custom checks and add the failing ones to their property's
+ * entry, then drop entries that stayed empty.
+ */
+async function settle(pending: Pending[], errors: ValidationIssue[]) {
+  const results = await Promise.all(pending.map((p) => p.result));
+  results.forEach((ok, i) => {
+    if (ok) return;
+    const { rule, object, value, entry } = pending[i];
+    entry!.constraints[rule.name as string] = message(rule, object, value);
+  });
+  for (let i = errors.length - 1; i >= 0; i--) {
+    if (Object.keys(errors[i].constraints).length === 0) errors.splice(i, 1);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -121,10 +190,31 @@ function items(v: any): any[] {
   return Array.isArray(v) ? v : Array.from(v);
 }
 
+/** A custom check on a value (or each item): a boolean, or a promise of one. */
+function custom(rule: ValidationRule, prepared: any, v: any, o: any): any {
+  const fn = rule.check!.fn;
+  if (rule.each && isArrayLike(v)) {
+    const results = items(v).map((item) =>
+      // class-validator's args.value is the whole array, not the item.
+      fn(item, rule.constraints, prepared, o, v),
+    );
+    if (results.some(isPromiseLike)) {
+      return Promise.all(results).then((list) => list.every(Boolean));
+    }
+    return results.every(Boolean);
+  }
+  return fn(v, rule.constraints, prepared, o);
+}
+
 /** `ValidationExecutor.execute` on a nested object, with its own class's rules. */
-function execute(object: any, errors: ValidationIssue[], prefix: string) {
+function execute(
+  object: any,
+  errors: ValidationIssue[],
+  prefix: string,
+  pending: Pending[],
+) {
   const check = object.constructor ? getCheck(object.constructor) : null;
-  if (check) check(object, errors, prefix);
+  if (check) check(object, errors, prefix, pending);
   else
     errors.push({
       path: prefix + "undefined",
@@ -138,13 +228,15 @@ function nestedItem(
   value: any,
   errors: ValidationIssue[],
   path: string,
+  pending: Pending[],
 ) {
   if (value === undefined) return;
   if (isArrayLike(value)) {
     for (let i = 0; i < rules.length; i++)
-      nestedEach(rules, value, errors, path);
+      nestedEach(rules, value, errors, path, pending);
   } else if (value instanceof Object) {
-    for (let i = 0; i < rules.length; i++) execute(value, errors, path + ".");
+    for (let i = 0; i < rules.length; i++)
+      execute(value, errors, path + ".", pending);
   } else {
     const constraints: Record<string, string> = {};
     for (const rule of rules) {
@@ -160,15 +252,17 @@ function nestedEach(
   value: any,
   errors: ValidationIssue[],
   path: string,
+  pending: Pending[],
 ) {
   const list = value instanceof Set ? Array.from(value) : value;
   list.forEach((sub: any, index: any) => {
-    nestedItem(rules, sub, errors, path + "." + index.toString());
+    nestedItem(rules, sub, errors, path + "." + index.toString(), pending);
   });
 }
 
 const helpers = {
   ...checkHelpers,
+  custom,
   message,
   isArrayLike,
   items,
@@ -204,7 +298,7 @@ function compileCheck(rules: ValidationRule[]): CheckFn {
   const body: string[] = [];
 
   body.push(
-    "var keys = Object.keys(o), i, k, v, c, ok, okEach, it;",
+    "var keys = Object.keys(o), i, k, v, c, ok, okEach, it, r, pp, e;",
     "for (i = 0; i < keys.length; i++) {",
     "  k = keys[i];",
     "  if (!A.has(k)) errs.push({ path: prefix + k, constraints: { whitelistValidation: \"property \" + k + \" should not exist\" } });",
@@ -231,7 +325,7 @@ function compileCheck(rules: ValidationRule[]): CheckFn {
       // Every condition runs, as class-validator maps them all before reducing.
       body.push(`if (!f${j}(o, v)) ok = false;`);
     }
-    body.push("if (ok) {", "c = undefined;");
+    body.push("if (ok) {", "c = undefined;", "pp = pend.length;");
 
     for (const rule of [...defined, ...checks]) {
       const j = ref(rule);
@@ -239,7 +333,14 @@ function compileCheck(rules: ValidationRule[]): CheckFn {
         `var k${j} = R[${j}].constraints, p${j} = P[${j}], f${j} = R[${j}].check.fn;`,
       );
       const fail = `(c || (c = {}))[${JSON.stringify(rule.name)}] = H.message(R[${j}], o, v);`;
-      if (rule.each) {
+      if (rule.custom) {
+        // User code: may need the object, may return a promise.
+        body.push(
+          `r = H.custom(R[${j}], p${j}, v, o);`,
+          `if (r !== null && typeof r === "object" && typeof r.then === "function") pend.push({ result: r, rule: R[${j}], object: o, value: v });`,
+          `else if (!r) ${fail}`,
+        );
+      } else if (rule.each) {
         body.push(
           "if (H.isArrayLike(v)) {",
           "  okEach = true; it = H.items(v);",
@@ -269,7 +370,10 @@ function compileCheck(rules: ValidationRule[]): CheckFn {
     }
 
     body.push(
-      `if (c !== undefined) errs.push({ path: prefix + ${key}, constraints: c });`,
+      "if (c !== undefined || pend.length > pp) {",
+      `  e = { path: prefix + ${key}, constraints: c || {} }; errs.push(e);`,
+      "  for (i = pp; i < pend.length; i++) pend[i].entry = e;",
+      "}",
     );
 
     if (n >= 0) {
@@ -277,10 +381,12 @@ function compileCheck(rules: ValidationRule[]): CheckFn {
         "if (v !== undefined) {",
         "  if (H.isArrayLike(v)) {",
         ...nested.map(
-          () => `    H.nestedEach(N[${n}], v, errs, prefix + ${key});`,
+          () => `    H.nestedEach(N[${n}], v, errs, prefix + ${key}, pend);`,
         ),
         "  } else if (v instanceof Object) {",
-        ...nested.map(() => `    H.execute(v, errs, prefix + ${key} + ".");`),
+        ...nested.map(
+          () => `    H.execute(v, errs, prefix + ${key} + ".", pend);`,
+        ),
         "  }",
         "}",
       );
@@ -292,7 +398,7 @@ function compileCheck(rules: ValidationRule[]): CheckFn {
   const source =
     "\"use strict\";\n" +
     head.join("\n") +
-    "\nreturn function check(o, errs, prefix) {\n" +
+    "\nreturn function check(o, errs, prefix, pend) {\n" +
     body.join("\n") +
     "\n};";
   return new Function("H", "R", "P", "N", "A", source)(

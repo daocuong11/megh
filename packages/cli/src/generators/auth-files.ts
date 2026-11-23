@@ -352,10 +352,9 @@ export function renderRolesSeeder(plan: AuthPlan, p: Paths, seederFile: string):
 export function renderAuthDto(plan: AuthPlan): string {
   const api = usesApiKeys(plan);
   const name = plan.userColumns.has("name");
-  const validators = ["IsEmail", "IsString", "MaxLength", "MinLength", ...(api ? ["IsDate", "IsOptional"] : [])].sort();
+  const validators = ["IsEmail", "IsString", "MaxLength", "MinLength", ...(api ? ["IsDate", "IsOptional", "Type"] : [])].sort();
   return lines(
-    api && `import { Type } from "class-transformer";`,
-    `import { ${validators.join(", ")} } from "class-validator";`,
+    `import { ${validators.join(", ")} } from "@meghjs/core";`,
     ``,
     `/** \`POST /auth/register\` */`,
     `export class RegisterDto {`,

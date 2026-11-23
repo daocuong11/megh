@@ -72,7 +72,7 @@ Documentation: **https://meghjs.github.io**
 - 🎯 **Decorator-based routing** — TypeScript decorator দিয়ে controller ও route তৈরি করুন
 - 💉 **Dependency injection** — `MeghContainer`, `@Injectable` এবং `Token`, Megh-এর নিজস্ব container-এর ওপর ভিত্তি করে (কোনো third-party DI library ছাড়া)
 - 📄 **OpenAPI / Swagger** — Swagger UI বা [Scalar](https://scalar.com) দিয়ে স্বয়ংক্রিয় documentation
-- ✅ **Validation** — [class-validator](https://github.com/typestack/class-validator) দিয়ে request DTO validate ও whitelist করা হয়
+- ✅ **Validation** — Megh-এর নিজস্ব compiled decorator দিয়ে request DTO validate ও whitelist করা হয় (class-validator-compatible, বাড়তি package লাগে না)
 - 🔑 **Authentication** — pluggable handler, যা `request.user` সেট করে
 - 🔒 **Authorization** — deny-by-default `@Authorized` route
 - 📁 **File uploads** — নিরাপদ, সীমাবদ্ধ storage-সহ multipart support
@@ -107,11 +107,11 @@ pnpm dlx @meghjs/cli new myapp
 অথবা নিজে install করুন:
 
 ```bash
-npm install @meghjs/core reflect-metadata class-validator class-transformer
+npm install @meghjs/core reflect-metadata
 ```
 
-`class-validator` ও `class-transformer` optional peer হিসেবে ঘোষিত, কিন্তু
-package-টি load হওয়ার সময়ই এগুলো import করে, তাই প্রতিটি project-এ এগুলো install করুন।
+Validation decorator আসে `@meghjs/core` থেকে, তাই `class-validator` ও
+`class-transformer` লাগে না। শুধু তাদের decorator দিয়ে লেখা DTO রাখতে চাইলে এগুলো install করুন।
 
 `tsconfig.json`-এ decorator চালু করুন:
 
@@ -455,10 +455,10 @@ class AdminController {
 
 ### Validation
 
-Validation চালায় `class-validator`। আপনার DTO-তে decorator যোগ করুন, আর Megh স্বয়ংক্রিয়ভাবে `@Body()` ও `@Query()` validate করবে:
+আপনার DTO-তে decorator যোগ করুন, আর Megh স্বয়ংক্রিয়ভাবে `@Body()` ও `@Query()` validate করবে। Decorator আসে `@meghjs/core` থেকে; নাম, option ও message `class-validator`-এর মতোই, আর প্রতিটি DTO একবার compile হয়ে একটি function-এ পরিণত হয়। `class-validator` দিয়ে লেখা DTO-ও কাজ করে, যতক্ষণ এটি install করা থাকে; বদলাতে শুধু import বদলান।
 
 ```typescript
-import { IsString, IsNotEmpty, IsEmail, IsInt, Min, Max, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsEmail, IsInt, Min, Max, IsOptional } from '@meghjs/core';
 
 class CreateUserDto {
   @IsString()
@@ -484,7 +484,7 @@ async createUser(@Body() body: CreateUserDto) {
 }
 ```
 
-- Handler **transform করা DTO instance** পায়, তাই `class-transformer`
+- Handler **transform করা DTO instance** পায়, তাই conversion
   decorator যেমন `@Type(() => Number)` কাজ করে।
 - DTO-তে ঘোষণা করা হয়নি এমন property **প্রত্যাখ্যাত** হয় (`whitelist` +
   `forbidNonWhitelisted`), যা mass assignment ঠেকায়।

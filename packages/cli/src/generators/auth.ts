@@ -492,9 +492,6 @@ function warnPackages(projectRoot: string, plan: AuthPlan) {
   const missingDev: string[] = [];
   if (usesJwt(plan) && !installedVersion("jsonwebtoken", projectRoot)) missing.push("jsonwebtoken");
   if (usesJwt(plan) && !installedVersion("@types/jsonwebtoken", projectRoot)) missingDev.push("@types/jsonwebtoken");
-  if (plan.strategy) {
-    for (const pkg of ["class-validator", "class-transformer"]) if (!installedVersion(pkg, projectRoot)) missing.push(pkg);
-  }
   if (missing.length) log.warn(`Install: npm install ${missing.join(" ")}`);
   if (missingDev.length) log.warn(`Install: npm install -D ${missingDev.join(" ")}`);
 }

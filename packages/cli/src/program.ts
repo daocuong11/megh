@@ -448,7 +448,7 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
       await review(o, () => makeView(name, { cwd: cwd(), force: o.force, layout, component: o.component }));
     });
 
-  make("make:dto", ["m:dto"], "Create a class-validator DTO in src/dtos/<name>.dto.ts")
+  make("make:dto", ["m:dto"], "Create a DTO in src/dtos/<name>.dto.ts")
     .option("--root <dir>", "Folder under src/ to write to (also -rt)")
     .action(async (name: string, o) => {
       await review(o, () => makeDto(name, { cwd: cwd(), ...o }));

@@ -1,5 +1,4 @@
-import { Type } from 'class-transformer';
-import { {validators} } from 'class-validator';
+import { {validators} } from '@meghjs/core';
 
 /** `POST /{route}` body. Columns the database fills in are optional. */
 export class Create{Model}Dto {

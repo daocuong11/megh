@@ -12,10 +12,12 @@
  *   import { IsString, MinLength } from "@meghjs/core";      // after
  *
  * Megh compiles each DTO's rules once into a single function; see
- * `compiler.ts`. `@IsUUID`, `@IsUrl` and `@IsEmail` with non-default options
- * call the `validator` package, as class-validator does, so they accept
- * exactly the same values; install it to use them. `@IsEmail()` with default
- * options needs no package (see `is-email.ts`).
+ * `compiler.ts`. `@IsUrl`, `@IsEmail` with non-default options and the
+ * string-format checks (`@IsAlpha`, `@IsISO8601`, `@IsMongoId`, …) call the
+ * `validator` package, as class-validator does, so they accept exactly the
+ * same values; install it to use them. `@IsEmail()` with default options and
+ * `@IsUUID()` need no package (see `is-email.ts`). `@IsPhoneNumber` uses
+ * `libphonenumber-js`, as class-validator does.
  */
 import {
   addValidationRule,
@@ -569,8 +571,31 @@ export function IsEmail(emailOptions?: object, options?: ValidationOptions) {
   );
 }
 
+/** `validator` 13.15's UUID patterns, so `@IsUUID` needs no package. */
+const UUID_PATTERNS: Record<string, RegExp> = {
+  1: /^[0-9A-F]{8}-[0-9A-F]{4}-1[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  2: /^[0-9A-F]{8}-[0-9A-F]{4}-2[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  3: /^[0-9A-F]{8}-[0-9A-F]{4}-3[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  4: /^[0-9A-F]{8}-[0-9A-F]{4}-4[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  5: /^[0-9A-F]{8}-[0-9A-F]{4}-5[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  6: /^[0-9A-F]{8}-[0-9A-F]{4}-6[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  7: /^[0-9A-F]{8}-[0-9A-F]{4}-7[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  8: /^[0-9A-F]{8}-[0-9A-F]{4}-8[0-9A-F]{3}-[89AB][0-9A-F]{3}-[0-9A-F]{12}$/i,
+  nil: /^00000000-0000-0000-0000-000000000000$/i,
+  max: /^ffffffff-ffff-ffff-ffff-ffffffffffff$/i,
+  loose: /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/i,
+  all: /^(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$/i,
+};
+
+function isUUID(str: string, version?: any): boolean {
+  const key =
+    version === undefined || version === null ? "all" : String(version);
+  return Object.prototype.hasOwnProperty.call(UUID_PATTERNS, key)
+    ? UUID_PATTERNS[key].test(str)
+    : false;
+}
+
 export function IsUUID(version?: any, options?: ValidationOptions) {
-  const isUUID = validatorLib("isUUID", "IsUUID");
   return validateBy(
     "isUuid",
     [version],
@@ -636,6 +661,549 @@ export const ArrayNotEmpty = (options?: ValidationOptions) =>
     (p) => p + "$property should not be empty",
     options,
   );
+
+export function ArrayUnique(
+  identifierOrOptions?: ((item: any) => any) | ValidationOptions,
+  validationOptions?: ValidationOptions,
+) {
+  const identifier =
+    typeof identifierOrOptions === "function" ? identifierOrOptions : undefined;
+  const options =
+    typeof identifierOrOptions !== "function"
+      ? identifierOrOptions
+      : validationOptions;
+  return validateBy(
+    "arrayUnique",
+    [],
+    {
+      fn: (v) => {
+        if (!Array.isArray(v)) return false;
+        const list = identifier
+          ? v.map((o) => (o != null ? identifier(o) : o))
+          : v;
+        // indexOf, not a Set, so NaN is handled as class-validator handles it.
+        const unique = list.filter((a, b, c) => c.indexOf(a) === b);
+        return list.length === unique.length;
+      },
+    },
+    (p) => p + "All $property's elements must be unique",
+    options,
+  );
+}
+
+export const ArrayContains = (values: any[], options?: ValidationOptions) =>
+  validateBy(
+    "arrayContains",
+    [values],
+    {
+      fn: (v, [list]) =>
+        Array.isArray(v) && list.every((item: any) => v.indexOf(item) !== -1),
+    },
+    (p) => p + "$property must contain $constraint1 values",
+    options,
+  );
+
+export const ArrayNotContains = (values: any[], options?: ValidationOptions) =>
+  validateBy(
+    "arrayNotContains",
+    [values],
+    {
+      fn: (v, [list]) =>
+        Array.isArray(v) && list.every((item: any) => v.indexOf(item) === -1),
+    },
+    (p) => p + "$property should not contain $constraint1 values",
+    options,
+  );
+
+// ── Common (more) ───────────────────────────────────────────────────────────
+
+export const Equals = (comparison: any, options?: ValidationOptions) =>
+  validateBy(
+    "equals",
+    [comparison],
+    { fn: (v, [c]) => v === c, inline: (x, k) => `(${x} === ${k}[0])` },
+    (p) => p + "$property must be equal to $constraint1",
+    options,
+  );
+
+export const NotEquals = (comparison: any, options?: ValidationOptions) =>
+  validateBy(
+    "notEquals",
+    [comparison],
+    { fn: (v, [c]) => v !== c, inline: (x, k) => `(${x} !== ${k}[0])` },
+    (p) => p + "$property should not be equal to $constraint1",
+    options,
+  );
+
+// ── Objects ─────────────────────────────────────────────────────────────────
+
+function isObjectValue(v: any): boolean {
+  return (
+    v != null &&
+    (typeof v === "object" || typeof v === "function") &&
+    !Array.isArray(v)
+  );
+}
+
+export const IsNotEmptyObject = (
+  objectOptions?: { nullable?: boolean },
+  options?: ValidationOptions,
+) =>
+  validateBy(
+    "isNotEmptyObject",
+    [objectOptions],
+    {
+      fn: (v, [o]) => {
+        if (!isObjectValue(v)) return false;
+        if (o?.nullable === false) {
+          return !Object.values(v).every((x) => x === null || x === undefined);
+        }
+        for (const key in v) {
+          if (Object.prototype.hasOwnProperty.call(v, key)) return true;
+        }
+        return false;
+      },
+    },
+    (p) => p + "$property must be a non-empty object",
+    options,
+  );
+
+export const IsInstance = (targetType: Function, options?: ValidationOptions) =>
+  validateBy(
+    "isInstance",
+    [targetType],
+    {
+      fn: (v, [t]) => !!t && typeof t === "function" && v instanceof t,
+    },
+    (p, args) =>
+      args?.constraints[0]
+        ? p + `$property must be an instance of ${args.constraints[0].name}`
+        : p +
+          "isInstance decorator expects and object as value, but got falsy value.",
+    options,
+  );
+
+// ── Dates ───────────────────────────────────────────────────────────────────
+
+const dateOf = (d: Date | (() => Date)) => (d instanceof Date ? d : d());
+
+export const MinDate = (
+  date: Date | (() => Date),
+  options?: ValidationOptions,
+) =>
+  validateBy(
+    "minDate",
+    [date],
+    {
+      fn: (v, [d]) => v instanceof Date && v.getTime() >= dateOf(d).getTime(),
+    },
+    (p) => "minimal allowed date for " + p + "$property is $constraint1",
+    options,
+  );
+
+export const MaxDate = (
+  date: Date | (() => Date),
+  options?: ValidationOptions,
+) =>
+  validateBy(
+    "maxDate",
+    [date],
+    {
+      fn: (v, [d]) => v instanceof Date && v.getTime() <= dateOf(d).getTime(),
+    },
+    (p) => "maximal allowed date for " + p + "$property is $constraint1",
+    options,
+  );
+
+// ── Numbers (more) ──────────────────────────────────────────────────────────
+
+export function IsDivisibleBy(num: number, options?: ValidationOptions) {
+  const isDivisibleBy = validatorLib("isDivisibleBy", "IsDivisibleBy");
+  return validateBy(
+    "isDivisibleBy",
+    [num],
+    {
+      fn: (v, [n]) =>
+        typeof v === "number" &&
+        typeof n === "number" &&
+        isDivisibleBy(String(v), n),
+    },
+    (p) => p + "$property must be divisible by $constraint1",
+    options,
+  );
+}
+
+// ── Strings checked by the `validator` package ─────────────────────────────
+
+/**
+ * A string check from the `validator` package, as class-validator wraps it:
+ * non-strings fail, the constraints are passed after the value.
+ */
+function stringCheck(
+  name: string,
+  fnName: string,
+  decorator: string,
+  constraints: any[],
+  text: string,
+  options?: ValidationOptions,
+): PropertyDecorator {
+  const lib = validatorLib(fnName, decorator);
+  return validateBy(
+    name,
+    constraints,
+    { fn: (v, k) => typeof v === "string" && lib(v, ...k) },
+    (p) => p + text,
+    options,
+  );
+}
+
+export const IsNumberString = (
+  numericOptions?: object,
+  options?: ValidationOptions,
+) =>
+  stringCheck(
+    "isNumberString",
+    "isNumeric",
+    "IsNumberString",
+    [numericOptions],
+    "$property must be a number string",
+    options,
+  );
+
+export const IsBooleanString = (options?: ValidationOptions) =>
+  stringCheck(
+    "isBooleanString",
+    "isBoolean",
+    "IsBooleanString",
+    [],
+    "$property must be a boolean string",
+    options,
+  );
+
+export const IsISO8601 = (isoOptions?: object, options?: ValidationOptions) =>
+  stringCheck(
+    "isIso8601",
+    "isISO8601",
+    "IsISO8601",
+    [isoOptions],
+    "$property must be a valid ISO 8601 date string",
+    options,
+  );
+
+export const IsDateString = (
+  isoOptions?: object,
+  options?: ValidationOptions,
+) =>
+  stringCheck(
+    "isDateString",
+    "isISO8601",
+    "IsDateString",
+    [isoOptions],
+    "$property must be a valid ISO 8601 date string",
+    options,
+  );
+
+export const IsAlpha = (locale?: string, options?: ValidationOptions) =>
+  stringCheck(
+    "isAlpha",
+    "isAlpha",
+    "IsAlpha",
+    [locale],
+    "$property must contain only letters (a-zA-Z)",
+    options,
+  );
+
+export const IsAlphanumeric = (locale?: string, options?: ValidationOptions) =>
+  stringCheck(
+    "isAlphanumeric",
+    "isAlphanumeric",
+    "IsAlphanumeric",
+    [locale],
+    "$property must contain only letters and numbers",
+    options,
+  );
+
+export const IsAscii = (options?: ValidationOptions) =>
+  stringCheck(
+    "isAscii",
+    "isAscii",
+    "IsAscii",
+    [],
+    "$property must contain only ASCII characters",
+    options,
+  );
+
+export const IsLowercase = (options?: ValidationOptions) =>
+  stringCheck(
+    "isLowercase",
+    "isLowercase",
+    "IsLowercase",
+    [],
+    "$property must be a lowercase string",
+    options,
+  );
+
+export const IsUppercase = (options?: ValidationOptions) =>
+  stringCheck(
+    "isUppercase",
+    "isUppercase",
+    "IsUppercase",
+    [],
+    "$property must be uppercase",
+    options,
+  );
+
+export const Contains = (seed: string, options?: ValidationOptions) =>
+  stringCheck(
+    "contains",
+    "contains",
+    "Contains",
+    [seed],
+    "$property must contain a $constraint1 string",
+    options,
+  );
+
+export function NotContains(seed: string, options?: ValidationOptions) {
+  const contains = validatorLib("contains", "NotContains");
+  return validateBy(
+    "notContains",
+    [seed],
+    { fn: (v, [s]) => typeof v === "string" && !contains(v, s) },
+    (p) => p + "$property should not contain a $constraint1 string",
+    options,
+  );
+}
+
+export const IsJSON = (options?: ValidationOptions) =>
+  stringCheck(
+    "isJson",
+    "isJSON",
+    "IsJSON",
+    [],
+    "$property must be a json string",
+    options,
+  );
+
+export const IsJWT = (options?: ValidationOptions) =>
+  stringCheck(
+    "isJwt",
+    "isJWT",
+    "IsJWT",
+    [],
+    "$property must be a jwt string",
+    options,
+  );
+
+export const IsHexColor = (options?: ValidationOptions) =>
+  stringCheck(
+    "isHexColor",
+    "isHexColor",
+    "IsHexColor",
+    [],
+    "$property must be a hexadecimal color",
+    options,
+  );
+
+export const IsHexadecimal = (options?: ValidationOptions) =>
+  stringCheck(
+    "isHexadecimal",
+    "isHexadecimal",
+    "IsHexadecimal",
+    [],
+    "$property must be a hexadecimal number",
+    options,
+  );
+
+export const IsMongoId = (options?: ValidationOptions) =>
+  stringCheck(
+    "isMongoId",
+    "isMongoId",
+    "IsMongoId",
+    [],
+    "$property must be a mongodb id",
+    options,
+  );
+
+export function IsIP(version?: 4 | 6 | "4" | "6", options?: ValidationOptions) {
+  const isIP = validatorLib("isIP", "IsIP");
+  return validateBy(
+    "isIp",
+    [version],
+    {
+      fn: (v, [ver]) =>
+        typeof v === "string" && isIP(v, ver ? `${ver}` : undefined),
+    },
+    (p) => p + "$property must be an ip address",
+    options,
+  );
+}
+
+export const IsBase64 = (base64Options?: object, options?: ValidationOptions) =>
+  stringCheck(
+    "isBase64",
+    "isBase64",
+    "IsBase64",
+    [base64Options],
+    "$property must be base64 encoded",
+    options,
+  );
+
+export const IsCreditCard = (options?: ValidationOptions) =>
+  stringCheck(
+    "isCreditCard",
+    "isCreditCard",
+    "IsCreditCard",
+    [],
+    "$property must be a credit card",
+    options,
+  );
+
+export const IsCurrency = (
+  currencyOptions?: object,
+  options?: ValidationOptions,
+) =>
+  stringCheck(
+    "isCurrency",
+    "isCurrency",
+    "IsCurrency",
+    [currencyOptions],
+    "$property must be a currency",
+    options,
+  );
+
+export const IsDecimal = (
+  decimalOptions?: object,
+  options?: ValidationOptions,
+) =>
+  stringCheck(
+    "isDecimal",
+    "isDecimal",
+    "IsDecimal",
+    [decimalOptions],
+    "$property is not a valid decimal number.",
+    options,
+  );
+
+export const IsFQDN = (fqdnOptions?: object, options?: ValidationOptions) =>
+  stringCheck(
+    "isFqdn",
+    "isFQDN",
+    "IsFQDN",
+    [fqdnOptions],
+    "$property must be a valid domain name",
+    options,
+  );
+
+export const IsLatLong = (options?: ValidationOptions) =>
+  stringCheck(
+    "isLatLong",
+    "isLatLong",
+    "IsLatLong",
+    [],
+    "$property must be a latitude,longitude string",
+    options,
+  );
+
+export const IsPostalCode = (locale: string, options?: ValidationOptions) =>
+  stringCheck(
+    "isPostalCode",
+    "isPostalCode",
+    "IsPostalCode",
+    [locale],
+    "$property must be a postal code",
+    options,
+  );
+
+export const IsSemVer = (options?: ValidationOptions) =>
+  stringCheck(
+    "isSemVer",
+    "isSemVer",
+    "IsSemVer",
+    [],
+    "$property must be a Semantic Versioning Specification",
+    options,
+  );
+
+export const IsMobilePhone = (
+  locale?: string | string[],
+  phoneOptions?: object,
+  options?: ValidationOptions,
+) =>
+  stringCheck(
+    "isMobilePhone",
+    "isMobilePhone",
+    "IsMobilePhone",
+    [locale, phoneOptions],
+    "$property must be a phone number",
+    options,
+  );
+
+export const IsStrongPassword = (
+  passwordOptions?: object,
+  options?: ValidationOptions,
+) =>
+  stringCheck(
+    "isStrongPassword",
+    "isStrongPassword",
+    "IsStrongPassword",
+    [passwordOptions],
+    "$property is not strong enough",
+    options,
+  );
+
+// ── Strings checked without a package ───────────────────────────────────────
+
+export const IsTimeZone = (options?: ValidationOptions) =>
+  validateBy(
+    "isTimeZone",
+    [],
+    {
+      fn: (v) => {
+        if (typeof v !== "string") return false;
+        try {
+          Intl.DateTimeFormat(undefined, { timeZone: v });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    },
+    (p) => p + "$property must be a valid IANA time-zone",
+    options,
+  );
+
+/**
+ * A valid phone number, optionally in `region` (`"BD"`, `"US"`). Uses the
+ * `libphonenumber-js` package, as class-validator does; install it to use it.
+ */
+export function IsPhoneNumber(region?: string, options?: ValidationOptions) {
+  let parsePhoneNumber: (value: string, region?: string) => any;
+  try {
+    parsePhoneNumber = require("libphonenumber-js/max").parsePhoneNumber;
+  } catch {
+    throw new Error(
+      "[Megh] @IsPhoneNumber() uses the \"libphonenumber-js\" package. Install it: npm install libphonenumber-js",
+    );
+  }
+  return validateBy(
+    "isPhoneNumber",
+    [region],
+    {
+      fn: (v, [r]) => {
+        if (typeof v !== "string" || v.trim() !== v) return false;
+        try {
+          const phoneNumber = parsePhoneNumber(v, r);
+          if (r && phoneNumber.country !== r) return false;
+          return phoneNumber.isValid();
+        } catch {
+          return false;
+        }
+      },
+    },
+    (p) => p + "$property must be a valid phone number",
+    options,
+  );
+}
 
 /** Helpers the compiled code calls (`H.*`). */
 export const checkHelpers = { isNumber, isLength, matches: matchesPattern };

@@ -4,8 +4,8 @@
  * @email xtrinsic96@gmail.com
  * @url https://github.com/xtareq
  */
-import { instanceToPlain, plainToInstance } from "class-transformer";
 import { Constructor } from "./common-utils";
+import { shapeAs, toInstanceOf } from "../../validator/serialize";
 
 export function pick<T extends object>(obj: T, paths: string[]): Partial<T> {
   const result: any = {};
@@ -222,7 +222,7 @@ export function transformObjectByInstanceToObject(
   instance: Constructor,
   value: object,
 ) {
-  return instanceToPlain(plainToInstance(instance, value), {
+  return shapeAs(instance, value, undefined, {
     excludeExtraneousValues: true,
     exposeUnsetFields: true,
   });
@@ -239,7 +239,7 @@ export function jsonToJs(value: string) {
 export function jsonToInstance(value: string, instance: Constructor) {
   try {
     const parsedValue = JSON.parse(value);
-    return plainToInstance(instance, parsedValue);
+    return toInstanceOf(instance, parsedValue);
   } catch (err: any) {
     return false;
   }

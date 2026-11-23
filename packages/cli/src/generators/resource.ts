@@ -261,7 +261,7 @@ function readDecoratedModel(source: string, withSql: (f: ResourceField) => Resou
 
 const INTEGER = /^(int\d?|integer|smallint|mediumint|tinyint|bigint|serial\d?|smallserial|bigserial)$/;
 
-/** class-validator decorators (and the type to declare) for one DTO field. */
+/** Validation decorators (and the type to declare) for one DTO field. */
 function validators(field: ResourceField): { decorators: string[]; ts: string } {
   const sql = field.sqlType ?? "";
   const base = sql.replace(/\(.*$/, "").trim();
@@ -312,13 +312,10 @@ function renderFields(fields: ResourceField[], allOptional: boolean): string {
 export function renderResourceDto(model: string, plural: string, route: string, schema: ResourceSchema): string {
   const create = renderFields(schema.inputFields, false);
   const update = renderFields(schema.inputFields, true);
-  // The list query always uses these.
-  const used = new Set<string>(["IsInt", "IsOptional", "Max", "Min"]);
+  // The list query always uses these. Validators and Type all come from @meghjs/core.
+  const used = new Set<string>(["IsInt", "IsOptional", "Max", "Min", "Type"]);
   for (const f of schema.inputFields) {
-    for (const d of validators(f).decorators) {
-      const name = d.match(/^\w+/)![0];
-      if (name !== "Type") used.add(name);
-    }
+    for (const d of validators(f).decorators) used.add(d.match(/^\w+/)![0]);
   }
   const empty = "  // No writable columns were found on the model.";
   return renderStub("dtos/resource-dto.stub", {

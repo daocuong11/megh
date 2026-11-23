@@ -1,17 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { validate } from 'class-validator';
+import { validateDto } from '@meghjs/core';
 import { {ClassName} } from '{import}';
 
 describe('{ClassName}', () => {
-  it('accepts a valid body', async () => {
-    const dto = Object.assign(new {ClassName}(), { name: 'Name', description: 'Description' });
+  it('accepts a valid body', () => {
+    const { errors } = validateDto({ClassName}, { name: 'Name', description: 'Description' });
 
-    expect(await validate(dto)).toHaveLength(0);
+    expect(errors).toBeNull();
   });
 
-  it('requires a name', async () => {
-    const errors = await validate(new {ClassName}());
+  it('requires a name', () => {
+    const { errors } = validateDto({ClassName}, {});
 
-    expect(errors.map((e) => e.property)).toEqual(['name']);
+    expect(errors?.map((e) => e.path)).toEqual(['name']);
   });
 });

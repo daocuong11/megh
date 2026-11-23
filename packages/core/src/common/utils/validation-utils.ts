@@ -6,6 +6,13 @@
  */
 import { Constructor } from "./common-utils";
 import { InternalErrorException } from "../exceptions"; // Need to check path relative to utils
+import { isMeghValidatorClass } from "../../validator/metadata";
+import { runValidation } from "../../validator/compiler";
+import {
+  classTransformer,
+  classValidator,
+  missingLibraryError,
+} from "../../validator/optional-libs";
 
 /**
  * Map a `design:type` / `design:paramtypes` entry to the data type the router
@@ -57,8 +64,9 @@ export function isValidJsonString(value: string): object | boolean {
 
 export const isClassValidatorClass = (target: Constructor) => {
   if (typeof target !== "function") return false;
+  const clsval = classValidator();
+  if (!clsval) return false;
   try {
-    const clsval = require("class-validator");
     const result = clsval
       .getMetadataStorage()
       .getTargetValidationMetadatas(target, undefined, false, false);
@@ -73,10 +81,26 @@ export async function validateObjectByInstance(
   value: object = {},
   options: "object" | "array" = "array",
 ) {
+  if (isMeghValidatorClass(target)) {
+    // Megh DTOs: same issue shapes, without the whitelist errors this helper never reported.
+    const { errors } = await runValidation(target as any, value);
+    const issues = (errors ?? []).filter(
+      (e) => !("whitelistValidation" in e.constraints),
+    );
+    if (issues.length === 0) return undefined;
+    return options == "object"
+      ? issues.reduce((acc: any, x) => {
+          acc[x.path] = x.constraints;
+          return acc;
+        }, {})
+      : issues;
+  }
   try {
-    const { validateOrReject } = require("class-validator");
-    const { plainToInstance } = require("class-transformer");
-    await validateOrReject(plainToInstance(target, value));
+    const cv = classValidator();
+    if (!cv) throw missingLibraryError(target, "class-validator");
+    const ct = classTransformer();
+    if (!ct) throw missingLibraryError(target, "class-transformer");
+    await cv.validateOrReject(ct.plainToInstance(target, value));
   } catch (error: any) {
     if (typeof error == "object" && Array.isArray(error)) {
       const errors =
@@ -92,6 +116,8 @@ export async function validateObjectByInstance(
             }));
       return errors;
     } else {
+      if (error instanceof Error && error.message.startsWith("[Megh]"))
+        throw error;
       throw new InternalErrorException("Can't validate object");
     }
   }
@@ -131,9 +157,11 @@ function flattenValidationErrors(
 }
 
 /**
- * Turn `value` into an instance of the DTO class `target` and validate it.
+ * Turn `value` into an instance of the DTO class `target` and validate it,
+ * with Megh's validator for DTOs that use Megh's decorators and with
+ * class-validator for DTOs that use its decorators.
  *
- * Properties without a class-validator decorator are rejected
+ * Properties without a validation decorator are rejected
  * (`forbidNonWhitelisted`), so handlers only ever see declared fields.
  * On success `value` is the transformed instance; on failure `errors` lists
  * every failing property, with nested paths dotted (`address.city`).
@@ -143,8 +171,15 @@ export async function transformAndValidate<T extends object>(
   value: unknown,
   options: Record<string, any> = REQUEST_VALIDATION_OPTIONS,
 ): Promise<RequestValidationResult<T>> {
-  const { validate } = require("class-validator");
-  const { plainToInstance } = require("class-transformer");
+  if (isMeghValidatorClass(target)) {
+    return runValidation(target, value);
+  }
+  const cv = classValidator();
+  if (!cv) throw missingLibraryError(target, "class-validator");
+  const ct = classTransformer();
+  if (!ct) throw missingLibraryError(target, "class-transformer");
+  const validate = cv.validate;
+  const plainToInstance = ct.plainToInstance;
   if (
     value !== null &&
     value !== undefined &&

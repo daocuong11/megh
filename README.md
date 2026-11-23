@@ -73,7 +73,7 @@ Documentation: **https://meghjs.github.io**
 - 🎯 **Decorator-based routing** — define controllers and routes with TypeScript decorators
 - 💉 **Dependency injection** — `MeghContainer`, `@Injectable` and `Token`, on Megh's own container (no third-party DI library)
 - 📄 **OpenAPI / Swagger** — automatic docs with Swagger UI or [Scalar](https://scalar.com)
-- ✅ **Validation** — request DTOs validated and whitelisted, with Megh's own compiled decorators or [class-validator](https://github.com/typestack/class-validator)
+- ✅ **Validation** — request DTOs validated and whitelisted by Megh's own compiled decorators (class-validator-compatible, no extra packages)
 - 🚨 **Error handling** — HTTP exceptions and pluggable exception filters
 - ❤️ **Health checks & request IDs** — `/health` and `/ready` probes, an `x-request-id` on every response and log line
 - 🔑 **Authentication** — pluggable handler that populates `request.user`
@@ -111,11 +111,12 @@ pnpm dlx @meghjs/cli new myapp
 Or install manually:
 
 ```bash
-npm install @meghjs/core reflect-metadata class-validator class-transformer
+npm install @meghjs/core reflect-metadata
 ```
 
-`class-validator` and `class-transformer` are declared as optional peers, but
-the package imports them at load time, so install them in every project.
+Validation decorators come from `@meghjs/core`, so `class-validator` and
+`class-transformer` aren't needed. Install them only to keep DTOs written with
+their decorators.
 
 Enable decorators in `tsconfig.json`:
 
@@ -149,6 +150,9 @@ feature needs one:
 | Redis cache                                  | `npm i ioredis`                                                                      |
 | WebSocket                                    | `npm i socket.io fastify-socket.io`                                                  |
 | Image transforms in `FileStorage`            | `npm i sharp`                                                                        |
+| String-format validators (`@IsUrl`, `@IsAlpha`, `@IsISO8601`, …) | `npm i validator`                                                |
+| `@IsPhoneNumber`                             | `npm i libphonenumber-js`                                                            |
+| DTOs written with class-validator            | `npm i class-validator class-transformer`                                            |
 | Pretty dev logs                              | `npm i -D pino-pretty`                                                               |
 
 ### Module format
@@ -471,8 +475,10 @@ under that name makes `app.run()` fail.
 Decorate your DTOs and Megh validates `@Body()` and `@Query()` automatically.
 The decorators come from `@meghjs/core`, with the same names, options and
 messages as `class-validator`, and each DTO is compiled once into a single
-function, so validation is several times faster. DTOs written with
-`class-validator` keep working; switching is a change of import. See
+function, so validation is several times faster. Custom and async validators,
+`@Expose` / `@Exclude` for responses and `@Type` discriminators are included,
+so `class-validator` and `class-transformer` aren't needed. DTOs written with
+them keep working while they are installed; switching is a change of import. See
 [Validation](https://meghjs.github.io/core-concept/validation).
 
 ```typescript
@@ -502,7 +508,7 @@ async createUser(@Body() body: CreateUserDto) {
 }
 ```
 
-- The handler receives the **transformed DTO instance**, so `class-transformer`
+- The handler receives the **transformed DTO instance**, so conversion
   decorators such as `@Type(() => Number)` apply.
 - Properties not declared on the DTO are **rejected** (`whitelist` +
   `forbidNonWhitelisted`), which prevents mass assignment.

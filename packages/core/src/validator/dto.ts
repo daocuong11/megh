@@ -9,26 +9,17 @@ import {
   getTransformerProperties,
 } from "../openapi/schema-properties";
 import { REQUEST_VALIDATION_OPTIONS } from "../common/utils/validation-utils";
+import {
+  classTransformer,
+  classValidator,
+  classValidatorRules,
+  missingLibraryError,
+} from "./optional-libs";
+import { getTransformedProperties } from "./metadata";
+
+export { classValidator, classValidatorRules };
 
 export type DtoIssue = { path: string; constraints: Record<string, string> };
-
-/** class-validator, when installed. */
-export function classValidator(): any {
-  try {
-    return require("class-validator");
-  } catch {
-    return undefined;
-  }
-}
-
-/** The class's class-validator rules, own and inherited. */
-export function classValidatorRules(target: Function): any[] {
-  const cv = classValidator();
-  if (!cv) return [];
-  return cv
-    .getMetadataStorage()
-    .getTargetValidationMetadatas(target, undefined, true, false);
-}
 
 /** Every property name the class's decorators (of any library) declare. */
 export function dtoProperties(target: Function): string[] {
@@ -37,6 +28,7 @@ export function dtoProperties(target: Function): string[] {
     if (meta.propertyName) names.add(meta.propertyName);
   }
   for (const rule of getValidationRules(target)) names.add(rule.propertyName);
+  for (const key of getTransformedProperties(target)) names.add(key);
   for (const key of getTransformerProperties(target)) names.add(key);
   for (const key of getRegisteredSchemaProperties(target)) names.add(key);
   return [...names];
@@ -56,17 +48,9 @@ export function validateDtoSync<T extends object>(
     return { value, errors: errors && errors.length ? errors : null };
   }
   const cv = classValidator();
-  let transformer: any;
-  try {
-    transformer = require("class-transformer");
-  } catch {
-    transformer = undefined;
-  }
-  if (!cv || !transformer) {
-    throw new Error(
-      `[Megh] ${target.name} uses class-validator decorators, but class-validator or class-transformer isn't installed.`,
-    );
-  }
+  if (!cv) throw missingLibraryError(target, "class-validator");
+  const transformer = classTransformer();
+  if (!transformer) throw missingLibraryError(target, "class-transformer");
   const instance = transformer.plainToInstance(target, plain) as T;
   const errors = cv.validateSync(instance, REQUEST_VALIDATION_OPTIONS);
   return { value: instance, errors: errors.length ? flatten(errors) : null };

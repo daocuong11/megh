@@ -29,8 +29,6 @@
     "@meghjs/cli": "file:../../packages/cli",
     "@meghjs/core": "file:../../packages/core",
     "better-sqlite3": "^13.0.3",
-    "class-transformer": "^0.5.1",
-    "class-validator": "^0.14.2",
     "kysely": "^0.29.7",
     "reflect-metadata": "^0.2.2"
   },
