@@ -62,7 +62,7 @@ export function registerPrompts({ server, readOnly }: ToolContext): void {
           "2. Call megh_list_routes and pick the routes. Prefer GET routes; a tool that changes data must have @Authorized() and @Tool({ confirm: true }).",
           "3. Add @Tool({ description }) to each one. Write the description for the model: what it does, when to use it, what it returns. Give the route's DTO fields validation decorators, since they become the tool's input schema.",
           "4. Call megh_list_ai_tools and fix every warning it reports, then megh_typecheck.",
-          "5. Show how to use them: `app.tools().forAnthropic()` for the model, and `tools.anthropicResults(...)` or `tools.call(name, args, { request })` to run them as the signed-in user.",
+          "5. Show how to use them: `app.tools().forAnthropic()` for the model, and `tools.anthropicResults(...)` or `tools.call(name, args, { request })` to run them as the signed-in user. If the user wants assistants such as Claude or Cursor to use the app, add `app.useMcp({ tools: { tags: [...] } })` (it needs `@modelcontextprotocol/sdk`).",
         ].join("\n"),
       ),
   );

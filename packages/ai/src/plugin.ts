@@ -2,6 +2,8 @@ import { definePlugin, getRouteDescriptor, type RouteDescriptor } from "@meghjs/
 import { toDefinition, type ToolDefinition, type ToolFilter } from "./registry";
 import { defaultToolName, getToolOptions } from "./tool";
 import { ToolSet, type ToolRuntime, type ToolsConfig } from "./toolset";
+import { assertMcpOptions, createMcpEndpoint, loadSdk, type McpOptions } from "./mcp";
+import type { IncomingMessage } from "http";
 
 declare module "@meghjs/core" {
   interface MeghApplication {
@@ -12,6 +14,13 @@ declare module "@meghjs/core" {
     tools(filter?: ToolFilter): ToolSet;
     /** Settings for every tool call: output limit, forwarded headers, audit logging. */
     useTools(config: ToolsConfig): this;
+    /**
+     * Serve `@Tool` routes as an MCP server over Streamable HTTP, at `/mcp` by
+     * default. Clients sign in like any API client (bearer token, API key);
+     * each tool call runs as that caller, through the tool route's own
+     * authentication and authorization. Needs `@modelcontextprotocol/sdk`.
+     */
+    useMcp(options: McpOptions): this;
   }
 }
 
@@ -75,6 +84,25 @@ export const aiPlugin = definePlugin({
     // Injectable: `constructor(private readonly tools: ToolSet)`.
     ctx.container.set(ToolSet, all);
     ctx.extend("tools", (filter?: ToolFilter) => (filter ? all.filter(filter) : all));
+
+    // useMcp's handler takes over the raw response; Megh passes it the request only.
+    const replies = new WeakMap<IncomingMessage, any>();
+    let mcp = false;
+    ctx.http.addHook("onRequest", (request, reply, done) => {
+      if (mcp) replies.set(request.raw, reply);
+      done();
+    });
+
+    ctx.extend("useMcp", (options: McpOptions) => {
+      if (mcp) throw new Error("[Megh] app.useMcp() can only be called once.");
+      assertMcpOptions(options);
+      const sdk = loadSdk();
+      mcp = true;
+      const endpoint = createMcpEndpoint({ sdk, tools: all, options, reply: (raw) => replies.get(raw) });
+      ctx.app.useControllers([endpoint.controller as any]);
+      ctx.onClose(() => endpoint.close());
+      return ctx.app;
+    });
 
     ctx.extend("useTools", (next: ToolsConfig) => {
       config = { ...config, ...next };

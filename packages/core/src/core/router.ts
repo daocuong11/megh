@@ -234,6 +234,8 @@ function toFastifyMethod(method: string): HTTPMethods | HTTPMethods[] {
  * `httpCode` comes from `@HttpCode` and loses to the result's own status.
  */
 function sendResult(res: any, result: any, httpCode?: number) {
+  // The handler answered itself, e.g. after `reply.hijack()` to stream.
+  if (res.sent) return res;
   if (result instanceof ViewResult) return sendView(res, result);
   if (result instanceof HttpResult) {
     res.code(result.statusCode);

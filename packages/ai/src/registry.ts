@@ -39,10 +39,12 @@ export interface ArgumentLayout {
   bodyKeys: string[];
 }
 
-/** Pick tools by tag (any of) or name. With neither, every tool. */
+/** Pick tools by tag (any of), name, or whether they need approval. With none, every tool. */
 export interface ToolFilter {
   tags?: string[];
   names?: string[];
+  /** `false`: only tools that run without approval; `true`: only `confirm` tools. */
+  confirm?: boolean;
 }
 
 /** @internal Build the tool's input schema and how its arguments map onto a request. */
@@ -93,6 +95,7 @@ export function matches(tool: ToolDefinition, filter?: ToolFilter): boolean {
   if (!filter) return true;
   if (filter.names && !filter.names.includes(tool.name)) return false;
   if (filter.tags && !filter.tags.some((t) => tool.tags.includes(t))) return false;
+  if (filter.confirm !== undefined && tool.confirm !== filter.confirm) return false;
   return true;
 }
 

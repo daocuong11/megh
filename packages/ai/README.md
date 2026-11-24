@@ -49,6 +49,22 @@ await this.tools.call("order_find", { id: "42" }, { request: req });
 - Responses are capped (`maxOutput`, default 20 000 characters), and each call
   is logged with the tool, status, duration and request ID.
 
+## Serve them over MCP
+
+```sh
+npm install @modelcontextprotocol/sdk
+```
+
+```ts
+app.useMcp({ tools: { tags: ["public"] } });   // Streamable HTTP at /mcp
+```
+
+Clients sign in like any API client (bearer token, API key), and each tool
+call runs as that caller through its route's own `@Authorized`. A
+`confirm: true` tool asks the user through the client before it runs (MCP
+elicitation); `confirm: "client"` or `"refuse"` change that. Sessions are
+bound to the credentials that opened them; `sessions: false` runs stateless.
+
 `megh route:list` shows a **TOOL** column for these routes, and the
 [`@meghjs/mcp`](../mcp) server's `megh_list_ai_tools` lists them with safety
 warnings.
