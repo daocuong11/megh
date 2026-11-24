@@ -67,7 +67,10 @@ const sidebar: DefaultTheme.SidebarItem[] = [
   },
   {
     text: 'AI',
-    items: [{ text: 'MCP Server', link: '/ai/mcp' }],
+    items: [
+      { text: 'MCP Server', link: '/ai/mcp' },
+      { text: 'LLM Tools', link: '/ai/tools' },
+    ],
   },
   {
     text: 'Production',

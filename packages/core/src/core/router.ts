@@ -83,6 +83,10 @@ import { HTTPMethods, FastifyInstance } from "fastify";
 import { ViewResult, sendView } from "../view/result";
 import { assertParamTypes } from "../http/params";
 import {
+  ROUTE_DESCRIPTOR_CONFIG_KEY,
+  createRouteDescriptor,
+} from "../plugins/route-descriptor";
+import {
   REDIRECT_META_KEY,
   RESPONSE_HEADERS_META_KEY,
 } from "../http/route-methods";
@@ -230,6 +234,8 @@ function toFastifyMethod(method: string): HTTPMethods | HTTPMethods[] {
  * `httpCode` comes from `@HttpCode` and loses to the result's own status.
  */
 function sendResult(res: any, result: any, httpCode?: number) {
+  // The handler answered itself, e.g. after `reply.hijack()` to stream.
+  if (res.sent) return res;
   if (result instanceof ViewResult) return sendView(res, result);
   if (result instanceof HttpResult) {
     res.code(result.statusCode);
@@ -820,6 +826,22 @@ export class MeghRouter {
       const _responseHeaders: Record<string, string> | undefined =
         Reflect.getMetadata(RESPONSE_HEADERS_META_KEY, prototype, method);
 
+      // Read by plugins (e.g. @meghjs/ai) in Fastify's onRoute hook.
+      const _descriptor = createRouteDescriptor({
+        controller: ctrl.constructor,
+        handler: method,
+        url: routePath,
+        paramMeta: allMeta.params as any,
+        query: queryParams,
+        rawBody: swaggerMeta.body ? routeSchema.body : undefined,
+        bodyClass,
+        authorized: !!(
+          authClsMeata.authorize ||
+          authClsMethodMeata.authorize ||
+          _requireUser
+        ),
+      });
+
       for (const target of routeTargets)
         this.app.route({
           url: target.url,
@@ -828,6 +850,7 @@ export class MeghRouter {
           schema: routeSchema,
           attachValidation: isMultipart,
           config: {
+            [ROUTE_DESCRIPTOR_CONFIG_KEY]: _descriptor,
             [ROUTE_FILTERS_CONFIG_KEY]: _routeFilters,
             ...(_rateLimit !== undefined && {
               [RATE_LIMIT_CONFIG_KEY]: _rateLimit,

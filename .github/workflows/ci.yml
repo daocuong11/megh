@@ -34,14 +34,16 @@ jobs:
       # Lerna 10 needs Node 22.22+, so the checks call the workspace scripts
       # through npm and run on every supported Node version.
       - run: npm ci
-      # Build first: @meghjs/data type-checks and tests against core's dist.
-      # npm runs workspaces alphabetically, so core builds before data.
+      # Build first: other packages type-check and test against core's dist.
+      # Lerna builds in dependency order (core before ai, cli, data, mcp); npm's
+      # --workspaces goes alphabetically, which builds ai before core. Same
+      # commands as release.yml.
       - name: Build
-        run: npm run build --workspaces --if-present
+        run: npm run build
       - name: Type-check
-        run: npm run typecheck --workspaces --if-present
+        run: npm run typecheck
       - name: Lint
-        run: npm run lint --workspaces --if-present
+        run: npm run lint
       - name: Test
         # Same command as release.yml (`lerna run test`), so CI sees what a release sees.
         run: npm test

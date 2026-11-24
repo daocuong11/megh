@@ -62,6 +62,7 @@ afterAll(async () => {
 
 const READ_TOOLS = [
   "megh_doctor",
+  "megh_list_ai_tools",
   "megh_list_routes",
   "megh_list_templates",
   "megh_migrate_status",
@@ -95,6 +96,7 @@ describe("tools", () => {
     expect(tools.map((t) => t.name).sort()).toEqual(READ_TOOLS);
     const { prompts } = await ro.listPrompts();
     expect(prompts.map((p) => p.name)).not.toContain("megh-add-resource");
+    expect(prompts.map((p) => p.name)).not.toContain("megh-add-ai-tools");
   });
 
   it("marks only the read tools read-only", async () => {
@@ -135,6 +137,45 @@ describe("project", () => {
       { method: "GET", path: "/users", controller: "UserController", handler: "list", file: "src/controllers/user.controller.ts", auth: "default" },
       { method: "POST", path: "/users/:id", controller: "UserController", handler: "update", file: "src/controllers/user.controller.ts", auth: "default" },
     ]);
+  });
+
+  it("lists @Tool routes with safety warnings", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "megh-mcp-ai-"));
+    try {
+      fs.writeFileSync(path.join(dir, "package.json"), '{"name":"ai","dependencies":{"@meghjs/core":"^0.7.1"}}');
+      fs.mkdirSync(path.join(dir, "src"));
+      fs.writeFileSync(
+        path.join(dir, "src", "order.controller.ts"),
+        `@ApiController("/orders")
+export class OrderController {
+  @Get("/:id")
+  @Tool({ description: "Look up one order by its ID, with its items." })
+  find() {}
+
+  @Post("/:id/refund")
+  @Tool({ description: "Refund." })
+  refund() {}
+
+  @Get("/")
+  list() {}
+}
+`,
+      );
+      const { text, isError } = await call("megh_list_ai_tools", { cwd: dir, static: true });
+      expect(isError).toBe(false);
+      const tools = JSON.parse(text);
+      expect(tools.map((t: any) => [t.name, t.method, t.path, t.confirm])).toEqual([
+        ["order_find", "GET", "/orders/:id", false],
+        ["order_refund", "POST", "/orders/:id/refund", false],
+      ]);
+      expect(tools[0].warnings).toEqual([]);
+      expect(tools[1].warnings.join("\n")).toMatch(/approval[\s\S]*@Authorized[\s\S]*Short description/);
+
+      fs.rmSync(path.join(dir, "src", "order.controller.ts"));
+      expect((await call("megh_list_ai_tools", { cwd: dir, static: true })).text).toMatch(/^No @Tool routes/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("type-checks the project and reports errors", async () => {
@@ -229,7 +270,12 @@ describe("docs", () => {
 describe("prompts", () => {
   it("lists the prompts and fills in their arguments", async () => {
     const { prompts } = await client.listPrompts();
-    expect(prompts.map((p) => p.name).sort()).toEqual(["megh-add-resource", "megh-explain", "megh-review-project"]);
+    expect(prompts.map((p) => p.name).sort()).toEqual([
+      "megh-add-ai-tools",
+      "megh-add-resource",
+      "megh-explain",
+      "megh-review-project",
+    ]);
 
     const res = await client.getPrompt({ name: "megh-add-resource", arguments: { name: "Product", fields: "title,price:money" } });
     const msg = res.messages[0].content as { text: string };

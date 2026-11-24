@@ -36,6 +36,7 @@ export function createServer(opts: ServerOptions = {}): McpServer {
         "Start with megh_project_info, megh_doctor and megh_project_structure to understand the project, " +
         "and megh_list_routes to see its HTTP API. Before writing Megh code, look up the API with " +
         "megh_search_docs and megh_read_doc rather than guessing. " +
+        "Routes exposed to LLMs with @Tool() (@meghjs/ai) are listed, with safety warnings, by megh_list_ai_tools. " +
         (readOnly
           ? "This server is read-only: it cannot write files or change the database."
           : "Generate code with megh_make and the megh_scaffold_* tools, the way the megh CLI does, " +

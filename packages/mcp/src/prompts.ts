@@ -42,6 +42,32 @@ export function registerPrompts({ server, readOnly }: ToolContext): void {
   if (readOnly) return;
 
   server.registerPrompt(
+    "megh-add-ai-tools",
+    {
+      title: "Expose routes to LLMs",
+      description: "Mark routes as LLM tools with @Tool() from @meghjs/ai, safely, then check them.",
+      argsSchema: {
+        routes: z
+          .string()
+          .optional()
+          .describe('Which routes, e.g. "the order lookup and refund routes". Omit to suggest a set.'),
+      },
+    },
+    ({ routes }) =>
+      user(
+        [
+          `Expose ${routes ?? "a useful set of this app's routes"} to LLMs as tools with @meghjs/ai.`,
+          'Read the "LLM tools" docs with megh_search_docs and megh_read_doc first.',
+          "1. Call megh_project_info. If @meghjs/ai is not a dependency, say the user should run `npm install @meghjs/ai`.",
+          "2. Call megh_list_routes and pick the routes. Prefer GET routes; a tool that changes data must have @Authorized() and @Tool({ confirm: true }).",
+          "3. Add @Tool({ description }) to each one. Write the description for the model: what it does, when to use it, what it returns. Give the route's DTO fields validation decorators, since they become the tool's input schema.",
+          "4. Call megh_list_ai_tools and fix every warning it reports, then megh_typecheck.",
+          "5. Show how to use them: `app.tools().forAnthropic()` for the model, and `tools.anthropicResults(...)` or `tools.call(name, args, { request })` to run them as the signed-in user. If the user wants assistants such as Claude or Cursor to use the app, add `app.useMcp({ tools: { tags: [...] } })` (it needs `@modelcontextprotocol/sdk`).",
+        ].join("\n"),
+      ),
+  );
+
+  server.registerPrompt(
     "megh-add-resource",
     {
       title: "Add a REST resource",
