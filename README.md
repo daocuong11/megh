@@ -1457,10 +1457,10 @@ The docs site still deploys from its standalone repository. `npm run mirror` pus
 
 ## Security
 
-Please report vulnerabilities privately to the maintainer ([GitHub @xtareq](https://github.com/xtareq)) rather than in a public issue.
+Please report vulnerabilities privately, not in a public issue. See [SECURITY.md](SECURITY.md).
 
 ---
 
 ## License
 
-MIT © [Tareq Hossain](https://github.com/xtareq)
+MIT © [Tareq Hossain](https://github.com/xtareq). See [LICENSE.md](LICENSE.md).
