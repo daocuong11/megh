@@ -37,6 +37,7 @@ import { log } from "./utils/log";
 import { cliVersion } from "./utils/stubs";
 import { withReview } from "./utils/changes";
 import { findProjectRoot } from "./utils/project";
+import { makeAgents } from "./generators/agents";
 
 export type RunOptions = {
   /** Working directory for the command. Defaults to `process.cwd()`. */
@@ -166,6 +167,12 @@ export function createProgram(run: RunOptions = {}): { program: Command; exitCod
   sub("doctor", "Check Node.js, @meghjs/core, reflect-metadata and decorator settings")
     .action(() => {
       exitCode = doctor(cwd());
+    });
+
+  sub("make:agents", "Write AGENTS.md (and a CLAUDE.md that imports it) with this project's commands and Megh's rules for coding agents")
+    .option("-f, --force", "Replace an existing AGENTS.md")
+    .action((o) => {
+      makeAgents({ cwd: cwd(), force: o.force });
     });
 
   sub("route:list", "List the app's routes")
