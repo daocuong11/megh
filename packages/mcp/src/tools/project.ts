@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { runChecks } from "@meghjs/cli";
 import { z } from "zod";
-import { projectInfo, projectStructure, runMegh, runNode, tscBin } from "../megh";
+import { parseJsonOutput, projectInfo, projectStructure, runMegh, runNode, tscBin } from "../megh";
 import { cwdArg, fromCli, jsonFromCli, safe, text } from "../result";
 import type { ToolContext } from "./context";
 
@@ -49,7 +49,7 @@ export function registerProjectTools({ server, project, readOnly }: ToolContext)
     {
       title: "List routes",
       description:
-        "List the app's HTTP routes (method, path, controller, handler, file). By default the sources are compiled and each *.controller.ts is loaded to read its route metadata, which needs @meghjs/core installed; set static to scan the decorators in the source instead.",
+        "List the app's HTTP routes (method, path, controller, handler, file). By default the sources are compiled and each *.controller.ts is loaded to read its route metadata, which needs @meghjs/core installed; set static to scan the decorators in the source instead. Routes marked @Tool() (@meghjs/ai) have a tool field with the name the model sees.",
       inputSchema: {
         cwd: cwdArg,
         static: z
@@ -62,6 +62,35 @@ export function registerProjectTools({ server, project, readOnly }: ToolContext)
     safe(async ({ cwd, static: isStatic }) =>
       jsonFromCli(await runMegh(project(cwd), ["route:list", "--json", ...(isStatic ? ["--static"] : [])])),
     ),
+  );
+
+  server.registerTool(
+    "megh_list_ai_tools",
+    {
+      title: "List LLM tools",
+      description:
+        "List the routes exposed to LLMs with @Tool() from @meghjs/ai: tool name, description, method, path, auth and whether it needs a person's approval (confirm). " +
+        "Each tool comes with warnings for risky setups, such as a tool that changes data without confirm or without authorization. Takes the same static option as megh_list_routes.",
+      inputSchema: {
+        cwd: cwdArg,
+        static: z
+          .boolean()
+          .optional()
+          .describe("Scan the decorators without running code (only string-literal names and descriptions)."),
+      },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ cwd, static: isStatic }) => {
+      const r = await runMegh(project(cwd), ["route:list", "--json", ...(isStatic ? ["--static"] : [])]);
+      if (r.exitCode !== 0) return fromCli(r);
+      const routes = parseJsonOutput(r.stdout) as RouteWithTool[];
+      const tools = routes.filter((route) => route.tool).map(describeTool);
+      return text(
+        tools.length
+          ? tools
+          : "No @Tool routes. Install @meghjs/ai and mark routes with @Tool({ description }) to expose them to LLMs.",
+      );
+    }),
   );
 
   server.registerTool(
@@ -122,4 +151,42 @@ export function registerProjectTools({ server, project, readOnly }: ToolContext)
       fromCli(await runMegh(project(cwd), ["build", ...(tsconfig ? ["--project", tsconfig] : [])])),
     ),
   );
+}
+
+type RouteWithTool = {
+  method: string;
+  path: string;
+  controller: string;
+  handler: string;
+  file: string;
+  auth: string;
+  tool?: { name: string; description?: string; confirm: boolean };
+};
+
+/** A tool from `route:list`, with warnings an assistant should raise. */
+export function describeTool(route: RouteWithTool) {
+  const tool = route.tool!;
+  const mutating = route.method !== "GET";
+  const warnings: string[] = [];
+  if (mutating && !tool.confirm)
+    warnings.push("Changes data but runs without a person's approval; consider @Tool({ confirm: true }).");
+  if (mutating && route.auth === "public")
+    warnings.push("Changes data and is @Public(): anyone who can call the tools can run it, signed in or not.");
+  if (mutating && route.auth === "default")
+    warnings.push(
+      "Changes data and has no @Authorized(); it is protected only if the app sets useAuthorization(handler, { default }).",
+    );
+  if (tool.description !== undefined && tool.description.trim().length < 20)
+    warnings.push("Short description: say what the tool does, when to use it and what it returns.");
+  return {
+    name: tool.name,
+    ...(tool.description !== undefined && { description: tool.description }),
+    method: route.method,
+    path: route.path,
+    handler: `${route.controller}.${route.handler}`,
+    file: route.file,
+    auth: route.auth,
+    confirm: tool.confirm,
+    warnings,
+  };
 }

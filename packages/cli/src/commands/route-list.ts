@@ -14,6 +14,8 @@ import { requireProjectRoot } from "../utils/project";
  * - `default`: neither; protected only when the app sets `useAuthorization(handler, { default })`.
  */
 export type RouteAuth = "public" | "default" | `authorized${string}`;
+/** An `@Tool()` on the route (from @meghjs/ai): the name the model sees. */
+export type RouteTool = { name: string; description?: string; confirm: boolean };
 export type Route = {
   method: string;
   path: string;
@@ -21,7 +23,19 @@ export type Route = {
   handler: string;
   file: string;
   auth: RouteAuth;
+  tool?: RouteTool;
 };
+
+/** Same default as @meghjs/ai: `OrderController.findOne` → `order_find_one`. */
+export function defaultToolName(controller: string, handler: string): string {
+  const snake = (s: string) =>
+    s
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
+      .toLowerCase();
+  const base = controller.replace(/Controller$/, "") || controller;
+  return `${snake(base)}_${snake(handler)}`.slice(0, 64);
+}
 export type RouteListOptions = { cwd?: string; json?: boolean; static?: boolean };
 
 export function joinRoute(...parts: string[]): string {
@@ -89,8 +103,13 @@ for (const [src, compiled] of files) {
       const auth = authorized && authorized.authorize
         ? "authorized" + (authorized.options && authorized.options.name ? ":" + authorized.options.name : "")
         : own.isPublic || cls.isPublic ? "public" : "default";
+      // @Tool() from @meghjs/ai, keyed by Symbol.for("megh:tool").
+      const toolKey = (Reflect.getMetadataKeys(proto, name) || []).find(
+        (k) => typeof k === "symbol" && k.description === "megh:tool");
+      const t = toolKey ? Reflect.getMetadata(toolKey, proto, name) : undefined;
+      const tool = t ? { name: t.name, description: t.description, confirm: t.confirm === true } : undefined;
       out.push({ controllerPath: meta.path || "/", method, path: Reflect.getMetadata("route:path", proto, name) || "/",
-        controller: value.name, handler: name, file: src, auth });
+        controller: value.name, handler: name, file: src, auth, tool });
     }
   }
 }
@@ -132,6 +151,13 @@ export function runtimeRoutes(root: string): Route[] {
     handler: r.handler,
     file: r.file.split(path.sep).join("/"),
     auth: r.auth ?? "default",
+    ...(r.tool && {
+      tool: {
+        name: r.tool.name ?? defaultToolName(r.controller, r.handler),
+        ...(r.tool.description !== undefined && { description: r.tool.description }),
+        confirm: r.tool.confirm,
+      },
+    }),
   }));
 }
 
@@ -171,6 +197,25 @@ function scanAuth(text: string): RouteAuth | undefined {
   return /@Public\s*\(/.test(text) ? "public" : undefined;
 }
 
+/** An `@Tool({...})` in `text`, with its string-literal name and description. */
+function scanTool(text: string, controller: string, handler: string): RouteTool | undefined {
+  const m = text.match(/@Tool\s*\(\s*\{([\s\S]*?)\}\s*\)/);
+  if (!m) return undefined;
+  const field = (key: string) => {
+    const q = m[1].match(new RegExp(`\\b${key}\\s*:\\s*(['"\`])`));
+    if (!q) return undefined;
+    const start = q.index! + q[0].length;
+    const end = m[1].indexOf(q[1], start);
+    return end === -1 ? undefined : m[1].slice(start, end);
+  };
+  const description = field("description");
+  return {
+    name: field("name") ?? defaultToolName(controller, handler),
+    ...(description !== undefined && { description }),
+    confirm: /\bconfirm\s*:\s*true\b/.test(m[1]),
+  };
+}
+
 /** Scan `@ApiController` classes and their `@Get`/`@Post`/... methods without running any code. */
 export function scanRoutes(source: string, file: string): Route[] {
   const routes: Route[] = [];
@@ -185,6 +230,7 @@ export function scanRoutes(source: string, file: string): Route[] {
     const classAuth = scanAuth(trailingDecorators(source.slice(0, m.index!)) + m[0]);
     const methodRe =
       /@(Get|Post|Put|Patch|Delete|Options|All)\s*\(([^)]*)\)[\s\S]*?(?<![@\w$])([A-Za-z_$][\w$]*)\s*\(/g;
+    let prevEnd = 0;
     for (const r of body.matchAll(methodRe)) {
       // The method's decorators: the lines above @Get, and up to its name.
       const own = scanAuth(trailingDecorators(body.slice(0, r.index!)) + r[0]);
@@ -192,6 +238,9 @@ export function scanRoutes(source: string, file: string): Route[] {
         own?.startsWith("authorized") ? own
         : classAuth?.startsWith("authorized") ? classAuth
         : own ?? classAuth ?? "default";
+      // From the previous handler to this one: @Tool({...}) often spans lines.
+      const tool = scanTool(body.slice(prevEnd, r.index! + r[0].length), m[2], r[3]);
+      prevEnd = r.index! + r[0].length;
       routes.push({
         method: r[1].toUpperCase(),
         path: joinRoute(base, decoratorPath(r[2])),
@@ -199,6 +248,7 @@ export function scanRoutes(source: string, file: string): Route[] {
         handler: r[3],
         file,
         auth,
+        ...(tool && { tool }),
       });
     }
   });
@@ -216,8 +266,16 @@ export function staticRoutes(root: string): Route[] {
 
 export function formatRoutes(routes: Route[]): string {
   if (!routes.length) return "No routes found.";
-  const rows = routes.map((r) => [r.method, r.path, r.auth, `${r.controller}.${r.handler}`]);
-  const head = ["METHOD", "PATH", "AUTH", "HANDLER"];
+  // The TOOL column only appears when the app has @Tool routes (@meghjs/ai).
+  const tools = routes.some((r) => r.tool);
+  const rows = routes.map((r) => [
+    r.method,
+    r.path,
+    r.auth,
+    `${r.controller}.${r.handler}`,
+    ...(tools ? [r.tool ? r.tool.name + (r.tool.confirm ? " (confirm)" : "") : ""] : []),
+  ]);
+  const head = ["METHOD", "PATH", "AUTH", "HANDLER", ...(tools ? ["TOOL"] : [])];
   const widths = head.map((h, i) => Math.max(h.length, ...rows.map((row) => row[i].length)));
   const fmt = (row: string[]) => row.map((cell, i) => cell.padEnd(widths[i])).join("  ").trimEnd();
   return [c.bold(fmt(head)), ...rows.map(fmt)].join("\n");

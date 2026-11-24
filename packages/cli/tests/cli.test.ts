@@ -6,7 +6,7 @@ import { runCli } from "../src/program";
 import { createApplication, FEATURES, initGit } from "../src/commands/new";
 import { spawnSync } from "child_process";
 import { runChecks } from "../src/commands/doctor";
-import { joinRoute, scanRoutes } from "../src/commands/route-list";
+import { formatRoutes, joinRoute, scanRoutes } from "../src/commands/route-list";
 import {
   makeConfig,
   makeController,
@@ -174,6 +174,40 @@ export class HealthController {
       "/posts/:id default",
       "/deep authorized",
     ]);
+  });
+
+  it("reads @Tool from @meghjs/ai, with the default tool name", () => {
+    const src = `
+@ApiController('/orders')
+export class OrderController {
+  @Get('/:id')
+  @Tool({ description: "Look up one order by its ID." })
+  findOne() {}
+
+  @Tool({
+    name: 'refund_order',
+    description: 'Refund an order.',
+    confirm: true,
+  })
+  @Post('/:id/refund')
+  refund() {}
+
+  @Get('/')
+  list() {}
+}`;
+    expect(scanRoutes(src, "a.ts").map((r) => [r.handler, r.tool])).toEqual([
+      ["findOne", { name: "order_find_one", description: "Look up one order by its ID.", confirm: false }],
+      ["refund", { name: "refund_order", description: "Refund an order.", confirm: true }],
+      ["list", undefined],
+    ]);
+  });
+
+  it("shows a TOOL column only when a route is a tool", () => {
+    const base = { method: "GET", path: "/a", controller: "A", handler: "a", file: "a.ts", auth: "default" as const };
+    expect(formatRoutes([base])).not.toMatch(/TOOL/);
+    const table = formatRoutes([base, { ...base, path: "/b", tool: { name: "a_b", confirm: true } }]);
+    expect(table).toMatch(/TOOL/);
+    expect(table).toMatch(/a_b \(confirm\)/);
   });
 });
 
