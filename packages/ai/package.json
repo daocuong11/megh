@@ -1,0 +1,77 @@
+{
+  "name": "@meghjs/ai",
+  "version": "0.7.1",
+  "description": "Turn Megh routes into LLM tools that run through the normal request pipeline",
+  "author": "Tareq Hossain",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "require": "./dist/plugin.js",
+      "default": "./dist/plugin.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "megh": {
+    "plugin": "./dist/plugin.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "megh",
+    "ai",
+    "llm",
+    "tools",
+    "function-calling",
+    "agents",
+    "anthropic",
+    "openai",
+    "mcp",
+    "typescript",
+    "fastify"
+  ],
+  "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@meghjs/core": "^0.7.1"
+  },
+  "devDependencies": {
+    "@meghjs/core": "^0.7.1",
+    "@swc/core": "^1.16.20",
+    "@types/node": "^22.20.5",
+    "reflect-metadata": "^0.2.2",
+    "typescript": "^5.7.2",
+    "unplugin-swc": "^2.0.0",
+    "vitest": "^4.1.12"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/meghjs/megh.git",
+    "directory": "packages/ai"
+  },
+  "homepage": "https://meghjs.github.io/ai/tools",
+  "bugs": {
+    "url": "https://github.com/meghjs/megh/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

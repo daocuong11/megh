@@ -1399,6 +1399,8 @@ This monorepo holds the source for every Megh package and the docs site, so a ch
 | `packages/core/` | [`@meghjs/core`](https://www.npmjs.com/package/@meghjs/core) | This repository (Lerna)                                               |
 | `packages/cli/`  | [`@meghjs/cli`](https://www.npmjs.com/package/@meghjs/cli)   | This repository (Lerna)                                               |
 | `packages/data/` | [`@meghjs/data`](https://www.npmjs.com/package/@meghjs/data) | This repository (Lerna)                                               |
+| `packages/mcp/`  | [`@meghjs/mcp`](https://www.npmjs.com/package/@meghjs/mcp)   | This repository (Lerna)                                               |
+| `packages/ai/`   | [`@meghjs/ai`](https://www.npmjs.com/package/@meghjs/ai)     | This repository (Lerna)                                               |
 | `docs/`          | https://meghjs.github.io (VitePress)                         | [meghjs/meghjs.github.io](https://github.com/meghjs/meghjs.github.io) |
 | `benchmarks/`    | HTTP throughput against Fastify, Express and NestJS          | n/a                                                                   |
 | `resources/`     | Logos and favicons                                           | n/a                                                                   |
