@@ -350,6 +350,24 @@ describe("new", () => {
     }
   });
 
+  it("writes AGENTS.md for coding agents, and a CLAUDE.md that imports it", async () => {
+    await createApplication("shop", { cwd: tmp, yes: true, skipInstall: true, features: ["openapi", "orm"] });
+    expect(read("shop", "CLAUDE.md")).toBe("@AGENTS.md\n");
+    const agents = read("shop", "AGENTS.md");
+    expect(agents).toMatch(/^# shop\n/);
+    expect(agents).toContain("| Unit tests (`*.spec.ts`) | `npm test` |");
+    expect(agents).toContain("npx megh migrate");
+    expect(agents).toContain("app.useControllers([...])");
+    expect(agents).toContain("https://meghjs.github.io/llms.txt");
+    expect(agents).not.toContain("@Tool()");
+
+    await createApplication("tiny_agents", { cwd: tmp, yes: true, skipInstall: true, minimal: true });
+    const tiny = read("tiny_agents", "AGENTS.md");
+    expect(tiny).not.toContain("npm test");
+    expect(tiny).not.toContain("useControllers");
+    expect(tiny).not.toContain("migrate");
+  });
+
   it("leaves the OpenAPI packages out of a minimal project", async () => {
     await createApplication("tiny", { cwd: tmp, yes: true, skipInstall: true, minimal: true });
     const pkg = JSON.parse(read("tiny", "package.json"));
@@ -456,6 +474,44 @@ describe("doctor", () => {
     const checks = runChecks(tmp);
     expect(checks.find((c) => c.name === "experimentalDecorators")?.status).toBe("ok");
     expect(checks.find((c) => c.name === "emitDecoratorMetadata")?.status).toBe("fail");
+  });
+});
+
+describe("make:agents", () => {
+  const app = (pkg: object, files: Record<string, string> = {}) => {
+    fs.writeFileSync(path.join(tmp, "package.json"), JSON.stringify(pkg));
+    for (const [f, content] of Object.entries(files)) {
+      fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true });
+      fs.writeFileSync(path.join(tmp, f), content);
+    }
+  };
+
+  it("describes an existing project: package manager, tests, ORM, views and @meghjs/ai", async () => {
+    app(
+      { name: "legacy", scripts: { test: "vitest run" }, dependencies: { "@meghjs/core": "^0.7.1", "@meghjs/ai": "^0.7.1" } },
+      { "pnpm-lock.yaml": "", "src/database/migrations/.gitkeep": "", "views/pages/home.megh.html": "" },
+    );
+    expect(await runCli(["make:agents"], { cwd: tmp })).toBe(0);
+    const agents = read("AGENTS.md");
+    expect(agents).toMatch(/^# legacy\n/);
+    expect(agents).toContain("`pnpm start:dev`");
+    expect(agents).toContain("`pnpm test`");
+    expect(agents).toContain("make:resource");
+    expect(agents).toContain("make:view");
+    expect(agents).toContain("@Tool({ confirm: true })");
+    expect(read("CLAUDE.md")).toBe("@AGENTS.md\n");
+  });
+
+  it("keeps an existing AGENTS.md unless --force, and never replaces the user's CLAUDE.md", async () => {
+    app({ name: "x" }, { "AGENTS.md": "mine\n", "CLAUDE.md": "# My rules\n" });
+    expect(await runCli(["make:agents"], { cwd: tmp })).not.toBe(0);
+    expect(read("AGENTS.md")).toBe("mine\n");
+
+    const info = vi.spyOn(console, "log");
+    expect(await runCli(["make:agents", "--force"], { cwd: tmp })).toBe(0);
+    expect(read("AGENTS.md")).toMatch(/^# x\n/);
+    expect(read("CLAUDE.md")).toBe("# My rules\n");
+    expect(info.mock.calls.flat().join("\n")).toMatch(/add a line `@AGENTS\.md`/);
   });
 });
 
