@@ -7,6 +7,7 @@ import { kebabCase, titleCase } from "../utils/names";
 import { renderEntrySeeder } from "../generators/make";
 import { cliVersion, coreRange, renderStub } from "../utils/stubs";
 import { ENV_TYPES_FILE, envTypesFile } from "../utils/env-types";
+import { CLAUDE_MD, renderAgentsMd } from "../generators/agents";
 
 export const PACKAGE_MANAGERS = ["npm", "yarn", "pnpm"] as const;
 export type PackageManager = (typeof PACKAGE_MANAGERS)[number];
@@ -374,6 +375,13 @@ export async function createApplication(name: string, opts: NewOptions = {}): Pr
         : "",
     }),
   );
+
+  // Instructions for coding agents; CLAUDE.md imports AGENTS.md for Claude Code.
+  add(
+    "AGENTS.md",
+    renderAgentsMd({ name: kebabCase(appName) || "megh-app", pm, minimal, mvc, orm: !!orm, ai: false }),
+  );
+  add("CLAUDE.md", CLAUDE_MD);
 
   log.section("Generating files");
   for (const [file, content] of files) {
