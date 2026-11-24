@@ -1,8 +1,7 @@
 # Megh monorepo
 
 Source of Megh, a TypeScript web framework on Fastify: `@meghjs/core`, the
-`megh` CLI, `@meghjs/data`, the `@meghjs/mcp` server, the `@meghjs/ai`
-plugin, and the docs site.
+`megh` CLI, `@meghjs/data`, the `@meghjs/mcp` server, and the docs site.
 [CONTRIBUTING.md](CONTRIBUTING.md) is the full process; this file is what an
 agent needs on top of it.
 
@@ -14,7 +13,6 @@ agent needs on top of it.
 | `packages/cli` | `megh` commands and generators; templates in `stubs/` | `tests/` |
 | `packages/data` | TypeORM / Knex plugin | `src/**/*.test.ts` |
 | `packages/mcp` | MCP server for coding agents; wraps the CLI | `tests/` |
-| `packages/ai` | `@Tool()` LLM tools and `app.useMcp()` plugin | `tests/` |
 | `docs/` | VitePress site, pages in `docs/content`. Not a workspace: own lockfile | `npm run docs:build` |
 
 Every package in `packages/` is published to npm unless it is `"private": true`.
