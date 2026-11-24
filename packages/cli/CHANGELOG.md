@@ -3,6 +3,14 @@
 All notable changes to this project will be documented in this file.
 See [Conventional Commits](https://conventionalcommits.org) for commit guidelines.
 
+## [0.7.2](https://github.com/meghjs/megh/compare/v0.7.1...v0.7.2) (2026-11-24)
+
+### Features
+
+* AGENTS.md for new projects, llms.txt for the docs ([9a388c3](https://github.com/meghjs/megh/commit/9a388c39eb08573bf46eaf981ccd0a4dc0cb4046))
+* **ai:** add @meghjs/ai with @Tool() LLM tools ([1aa19e4](https://github.com/meghjs/megh/commit/1aa19e4a6f2fa64d7e477641c45f87bc2147ad02)), closes [megh-add-ai-tools](https://github.com/me/issues/add-ai-tools)
+
+
 ## [0.7.1](https://github.com/meghjs/megh/compare/v0.7.0...v0.7.1) (2026-11-23)
 
 ### Features
