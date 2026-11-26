@@ -3,3 +3,6 @@
 
 # View templates must keep LF endings (tests compare rendered output exactly)
 *.megh.html text eol=lf
+
+# Bundled Megh language server (built from editors/vscode/src/server.ts)
+editors/neovim/server/megh-language-server.js -diff linguist-generated
