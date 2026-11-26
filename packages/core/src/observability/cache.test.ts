@@ -37,6 +37,8 @@ describe("CacheManager (in-memory)", () => {
   });
 
   it("should not fail when invalidating a non-existent tag", async () => {
+    await cache.set("keep", "value");
     await expect(cache.invalidateTags("nope")).resolves.not.toThrow();
+    expect(await cache.get("keep")).toBe("value");
   });
 });
