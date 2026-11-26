@@ -74,8 +74,14 @@ code --install-extension megh-templates-0.1.0.vsix
 ```sh
 npm test            # unit tests (node:test)
 npm run typecheck
-npm run build       # bundles src/ into dist/extension.js
+npm run build       # bundles src/ into dist/extension.js, and the server
 ```
+
+- `src/server.ts` serves the same features over LSP (stdio) for other
+  editors. `npm run build:server` bundles it into
+  `../neovim/server/megh-language-server.js`, which is committed so the
+  mirrored Neovim plugin works without a build step. Rebuild it after
+  changing anything in `src/`.
 
 - `src/mask.ts` finds Megh syntax and blanks it out, so
   `vscode-html-languageservice` sees plain HTML at the same offsets.
